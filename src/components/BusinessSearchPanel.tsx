@@ -6,7 +6,10 @@ type BusinessSearchResponse = {
   rejected: Array<{ name: string; pageUrl?: string; reasons: string[] }>;
   progress: string[];
   pagesConfigured: boolean;
-  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[] };
+  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[];
+    rounds?: { mapPlaces: number; mapLinked: number; websiteLinked: number; nameMatched: number; nameLookups: number; areaQueries: number };
+    area?: { name: string; fromCache: boolean };
+    coverage?: { found: number; estimatedTotal: number; percent: number } | null };
 };
 
 /** Discover tab: find small and local businesses through their public Facebook Pages (beta). */
@@ -80,7 +83,7 @@ export default function BusinessSearchPanel() {
             disabled={running || !query.trim()}
             className="rounded-lg bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {running ? 'Searching…' : 'Find businesses'}
+            {running ? 'Searching\u2026' : 'Find businesses'}
           </button>
         </div>
         {config && !config.search && (
@@ -99,6 +102,31 @@ export default function BusinessSearchPanel() {
             Found {result.stats.pagesFound} Pages, kept {result.leads.length} ({result.stats.qualified} qualified, {result.stats.maybe} to review), rejected {result.stats.rejected}.
             {result.stats.saved && ` ${result.stats.saved.created} new in your CRM.`}
           </p>
+          {result.stats.area && result.stats.rounds && (
+            <p className="text-xs text-slate-400">
+              Map data for {result.stats.area.name}: {result.stats.rounds.mapPlaces} businesses, {result.stats.rounds.mapLinked} with a Facebook link
+              {result.stats.rounds.websiteLinked ? `, ${result.stats.rounds.websiteLinked} found on their website` : ''}
+              {result.stats.rounds.nameMatched ? `, ${result.stats.rounds.nameMatched} found by name` : ''}.
+            </p>
+          )}
+          {result.stats.coverage && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-slate-300">
+                <span>Coverage of this area</span>
+                <span>about {result.stats.coverage.percent}% of an estimated {result.stats.coverage.estimatedTotal} Pages</span>
+              </div>
+              <div
+                className="h-2 rounded bg-slate-800"
+                role="meter"
+                aria-label="Estimated coverage of this area"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={result.stats.coverage.percent}
+              >
+                <div className="h-2 rounded bg-sky-500" style={{ width: `${Math.min(100, result.stats.coverage.percent)}%` }} />
+              </div>
+            </div>
+          )}
           <ul className="divide-y divide-slate-800">
             {result.leads.map((lead) => (
               <li key={lead.id} className="py-2 text-sm">
@@ -113,7 +141,7 @@ export default function BusinessSearchPanel() {
                   {lead.reviewStatus === 'MAYBE' && <span className="rounded bg-amber-500/20 px-1.5 text-xs text-amber-300">Review</span>}
                 </div>
                 <p className="text-slate-400">
-                  {[lead.business?.category, lead.business?.city, lead.business?.ownerName && `Owner: ${lead.business.ownerName}`].filter(Boolean).join(' · ')}
+                  {[lead.business?.category, lead.business?.city, lead.business?.ownerName && `Owner: ${lead.business.ownerName}`].filter(Boolean).join(' \u00b7 ')}
                 </p>
                 {lead.evidenceReasons?.length ? <p className="text-xs text-slate-500">{lead.evidenceReasons.join('; ')}</p> : null}
               </li>

@@ -1,9 +1,13 @@
 import crypto from "crypto";
 import type { BusinessDetails } from "../../src/types.js";
 import { parseBusinessBrief, type BusinessSearchSpec } from "./brief.js";
-import { discoverPages, type DiscoverDeps, type DiscoveredPage } from "./discover.js";
+import type { CoverageEstimate } from "./coverage.js";
+import { describeCoverage } from "./coverage.js";
+import type { DiscoveredPage } from "./discover.js";
 import { readFacebookPages, type FetchLike, type PageCache } from "./facebookPages.js";
+import { addressCountry, checkPlaceMatch, splitPlaceAndCountry, type AreaPlace } from "./places.js";
 import { extractOwnerName, qualifyBusiness, type Qualification } from "./qualify.js";
+import { collectCandidates, type Candidate, type CollectDeps, type CollectStats } from "./rounds.js";
 
 export type BusinessSearchInput = {
   query: string;
@@ -13,7 +17,7 @@ export type BusinessSearchInput = {
   onProgress?: (message: string) => void;
 };
 
-export type BusinessSearchDeps = DiscoverDeps & {
+export type BusinessSearchDeps = CollectDeps & {
   brightDataToken?: string;
   fetchImpl?: FetchLike;
   pageCache?: PageCache;
@@ -42,6 +46,10 @@ export type BusinessSearchResult = {
     saved?: { created: number; updated: number; duplicates: number };
     searchErrors: string[];
     durationMs: number;
+    /** Where Pages came from and how much of the area was covered. */
+    rounds: Omit<CollectStats, "searchErrors" | "searchResults" | "skippedKnown">;
+    area?: { name: string; release?: string; fromCache: boolean };
+    coverage: CoverageEstimate | null;
   };
 };
 
@@ -53,14 +61,29 @@ export function nameFromSearchTitle(title: string): string {
   const segments = title.split(/\s+\|\s+/);
   const withCity = segments.length >= 3 && /^facebook$/i.test(segments[segments.length - 1].trim());
   return (withCity ? segments[0] : title)
-    .replace(/\s*[|\-–]\s*Facebook\s*$/i, "")
-    .replace(/\s*[|\-–]\s*(?:Home|About|Posts|Photos|Reviews)\s*$/i, "")
+    .replace(/\s*[|\-\u2013]\s*Facebook\s*$/i, "")
+    .replace(/\s*[|\-\u2013]\s*(?:Home|About|Posts|Photos|Reviews)\s*$/i, "")
     .replace(/\s*\|\s*Facebook.*$/i, "")
     .trim();
 }
 
 /** Search-snippet stand-in used when a Page could not be read from Bright Data. */
-export function businessFromSearchHit(page: DiscoveredPage): BusinessDetails | null {
+export function businessFromSearchHit(page: DiscoveredPage, place?: AreaPlace): BusinessDetails | null {
+  if (place) {
+    return mergePlaceDetails(
+      {
+        name: place.name,
+        pageUrl: page.url,
+        pageId: page.pageId,
+        username: page.username,
+        category: place.categories[0],
+        about: page.snippet || undefined,
+        dataQuality: "partial",
+        fetchedAt: new Date().toISOString(),
+      },
+      place,
+    );
+  }
   const name = nameFromSearchTitle(page.title);
   if (!name) return null;
   return {
@@ -73,6 +96,27 @@ export function businessFromSearchHit(page: DiscoveredPage): BusinessDetails | n
     fetchedAt: new Date().toISOString(),
   };
 }
+
+/** Fills contact and address gaps on a Page from its map listing. Page data wins where both exist. */
+export function mergePlaceDetails(business: BusinessDetails, place: AreaPlace): BusinessDetails {
+  const merged: BusinessDetails = { ...business };
+  if (!merged.phones?.length && place.phones.length) merged.phones = place.phones;
+  if (!merged.websites?.length && place.websites.length) merged.websites = place.websites;
+  if (!merged.emails?.length && place.emails.length) merged.emails = place.emails;
+  if (!merged.address && place.address) merged.address = place.address;
+  if (!merged.city && place.city) merged.city = place.city;
+  if (!merged.country && place.country) merged.country = place.country;
+  if (!merged.category && place.categories[0]) merged.category = place.categories[0];
+  return merged;
+}
+
+const VIA_LABEL: Record<Candidate["via"][number], string> = {
+  map: "Found in map data",
+  website: "Found on the business website",
+  name: "Found by name from the map listing",
+  search: "Found by web search",
+  "area-search": "Found by area search",
+};
 
 export function businessLeadId(pageKey: string): string {
   return `biz-${crypto.createHash("sha256").update(pageKey).digest("hex").slice(0, 24)}`;
@@ -129,8 +173,10 @@ export function buildBusinessLead(
 
 /**
  * Finds businesses through their public Facebook Pages:
- * brief -> search for Page links -> filter (no LLM) -> read Pages (Bright Data, cached)
- * -> rules-based qualification -> owner name from Page text -> save.
+ * brief -> collect Page links in rounds, cheapest first (free map data, web search,
+ * business websites, name lookups, area searches; see rounds.ts) -> read Pages
+ * (Bright Data, cached) -> check each Page against its map listing -> rules-based
+ * qualification -> owner name from Page text -> save, with a coverage estimate.
  */
 export async function runBusinessSearch(
   input: BusinessSearchInput,
@@ -146,26 +192,23 @@ export async function runBusinessSearch(
     `Looking for ${spec.categoryTerms.join(" ")}${spec.place ? ` in ${spec.place}` : ""}${spec.minFollowers ? ` with ${spec.minFollowers}+ followers` : ""}.`,
   );
 
-  // Read about 1.5x the target so rejections still leave enough results.
-  const discovery = await discoverPages(
+  // Collect about 1.5x the target so rejections still leave enough results.
+  const collected = await collectCandidates(
     spec,
-    {
-      targetCount: Math.ceil(limit * 1.5),
-      existingKeys: deps.existingKeys,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    },
+    { target: Math.ceil(limit * 1.5), existingKeys: deps.existingKeys, signal: input.signal, onProgress: input.onProgress },
     deps,
   );
+  const pages = collected.candidates;
+  input.onProgress?.(`Found ${pages.length} new Facebook Pages to check.`);
 
   let readResults: Awaited<ReturnType<typeof readFacebookPages>> = {
-    results: discovery.pages.map((page) => ({ key: page.key, error: "Bright Data is not configured" })),
+    results: pages.map((page) => ({ key: page.key, error: "Bright Data is not configured" })),
     cached: 0,
     fetched: 0,
     failed: 0,
   };
-  if (deps.brightDataToken && discovery.pages.length > 0) {
-    readResults = await readFacebookPages(discovery.pages, {
+  if (deps.brightDataToken && pages.length > 0) {
+    readResults = await readFacebookPages(pages, {
       token: deps.brightDataToken,
       cache: deps.pageCache,
       fetchImpl: deps.fetchImpl,
@@ -174,19 +217,38 @@ export async function runBusinessSearch(
       pollMs: deps.pagesPollMs,
       onProgress: input.onProgress,
     });
-  } else if (discovery.pages.length > 0) {
-    input.onProgress?.("Bright Data token not set, so Pages are judged from search results only.");
+  } else if (pages.length > 0) {
+    input.onProgress?.("Bright Data token not set, so Pages are judged from search results and map data only.");
   }
 
+  const wantedCountry = collected.area?.country || splitPlaceAndCountry(spec.place).country;
   const now = new Date().toISOString();
   const accepted: Array<{ lead: Record<string, any>; score: number }> = [];
   const rejected: BusinessSearchResult["rejected"] = [];
   let qualified = 0;
   let maybe = 0;
-  discovery.pages.forEach((page, index) => {
+  pages.forEach((page, index) => {
     const read = readResults.results[index];
-    const business = read?.business || businessFromSearchHit(page);
+    let business = read?.business || businessFromSearchHit(page, page.place);
     if (!business) return;
+    const sourceReasons = page.via.map((via) => VIA_LABEL[via]).filter((label, i, all) => all.indexOf(label) === i);
+    if (page.place) {
+      // Pages found by name must prove they are the listed business; map and website links already do.
+      if (read?.business && !page.via.some((via) => via === "map" || via === "website")) {
+        const match = checkPlaceMatch(page.place, business);
+        if (match.level === "conflict") {
+          rejected.push({ name: business.name, pageUrl: business.pageUrl, reasons: match.reasons });
+          return;
+        }
+        sourceReasons.push(...match.reasons.map((reason) => reason.charAt(0).toUpperCase() + reason.slice(1)));
+      }
+      business = mergePlaceDetails(business, page.place);
+    }
+    const country = addressCountry(business.address);
+    if (wantedCountry && country && country !== wantedCountry) {
+      rejected.push({ name: business.name, pageUrl: business.pageUrl, reasons: [`Address is in ${country}, not ${wantedCountry}: ${business.address}`] });
+      return;
+    }
     const qualification = qualifyBusiness(business, spec);
     if (qualification.verdict === "rejected") {
       rejected.push({ name: business.name, pageUrl: business.pageUrl, reasons: qualification.reasons });
@@ -194,9 +256,12 @@ export async function runBusinessSearch(
     }
     if (qualification.verdict === "qualified") qualified++;
     else maybe++;
+    // Pages tied to a map listing are the most certain, so they rank a little higher.
+    const bonus = page.place ? 0.5 : 0;
+    const withSources: Qualification = { ...qualification, reasons: [...sourceReasons, ...qualification.reasons] };
     accepted.push({
-      lead: buildBusinessLead(page.key, business, qualification, spec, now),
-      score: qualification.score,
+      lead: buildBusinessLead(page.key, business, withSources, spec, now),
+      score: qualification.score + bonus,
     });
   });
 
@@ -205,6 +270,7 @@ export async function runBusinessSearch(
     .slice(0, limit)
     .map((entry) => entry.lead);
   const saved = deps.persist && leads.length > 0 ? deps.persist(leads) : undefined;
+  if (collected.area) input.onProgress?.(describeCoverage(collected.coverage));
   input.onProgress?.(
     `Done: ${leads.length} businesses (${qualified} qualified, ${maybe} to review), ${rejected.length} rejected.`,
   );
@@ -214,10 +280,10 @@ export async function runBusinessSearch(
     leads,
     rejected,
     stats: {
-      queries: discovery.queries.length,
-      searchResults: discovery.totalHits,
-      pagesFound: discovery.pages.length,
-      skippedKnown: discovery.skippedKnown,
+      queries: collected.queries.length,
+      searchResults: collected.stats.searchResults,
+      pagesFound: pages.length,
+      skippedKnown: collected.stats.skippedKnown,
       pagesRead: readResults.fetched,
       pagesFromCache: readResults.cached,
       pagesFailed: readResults.failed,
@@ -225,8 +291,22 @@ export async function runBusinessSearch(
       maybe,
       rejected: rejected.length,
       saved,
-      searchErrors: discovery.errors,
+      searchErrors: collected.stats.searchErrors,
       durationMs: Date.now() - started,
+      rounds: {
+        mapPlaces: collected.stats.mapPlaces,
+        mapLinked: collected.stats.mapLinked,
+        websitesChecked: collected.stats.websitesChecked,
+        websiteLinked: collected.stats.websiteLinked,
+        nameLookups: collected.stats.nameLookups,
+        nameMatched: collected.stats.nameMatched,
+        searchQueries: collected.stats.searchQueries,
+        areaQueries: collected.stats.areaQueries,
+      },
+      area: collected.area
+        ? { name: collected.area.areaName, release: collected.area.release, fromCache: collected.area.fromCache }
+        : undefined,
+      coverage: collected.coverage,
     },
   };
 }
