@@ -1785,10 +1785,13 @@ export function getLeadsETag(queryParams?: Record<string, any>): string {
   const db = getLeadsDb();
   const row = getCachedStatement(
     db,
-    "SELECT MAX(updated_at) as max_updated, COUNT(*) as count FROM leads",
-  ).get() as { max_updated?: string; count?: number } | undefined;
+    "SELECT MAX(updated_at) as max_updated, COUNT(*) as count, TOTAL(revision) as revision_sum FROM leads",
+  ).get() as { max_updated?: string; count?: number; revision_sum?: number } | undefined;
   const maxUpdated = row?.max_updated || "0";
   const count = Number(row?.count || 0);
+  // Every upsert bumps `revision`, so the sum catches edits that keep an older
+  // updated_at without relying on the in-memory mutation counter (Finding 17).
+  const revisionSum = Number(row?.revision_sum || 0);
   const initialized = hasLeadStoreBeenInitialized() ? "1" : "0";
   let qStr = "";
   if (queryParams && typeof queryParams === "object") {
@@ -1804,7 +1807,7 @@ export function getLeadsETag(queryParams?: Record<string, any>): string {
   }
   const hash = crypto
     .createHash("md5")
-    .update(`${maxUpdated}:${count}:${dbMutationCounter}:${initialized}:${qStr}`)
+    .update(`${maxUpdated}:${count}:${revisionSum}:${initialized}:${qStr}`)
     .digest("hex")
     .slice(0, 16);
   return `W/"${hash}"`;
