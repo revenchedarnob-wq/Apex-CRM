@@ -8,7 +8,8 @@ import {
 } from "../db.js";
 import { brightDataSearch, isBrightDataConfigured } from "../services/brightdata.js";
 import { parseApiKeys } from "../services/keyRotator.js";
-import { hasTavilyKey, tavilySearch } from "../services/llm.js";
+import { hasOpenAIKey, hasTavilyKey, openAIStructured, tavilySearch } from "../services/llm.js";
+import type { AiCall } from "./aiJudge.js";
 import { ssrfSafeDispatcher } from "../leadSearch/siteProbe.js";
 import type { FetchLike, PageCache } from "./facebookPages.js";
 import { createOvertureAreaSource, loadDuckDbQueryRunner, type AreaCache, type QueryRunner } from "./overture.js";
@@ -103,6 +104,15 @@ export function isBusinessSearchConfigured() {
   };
 }
 
+/** Any configured AI provider (OpenRouter, Atria, Byesu...), through the app's shared LLM queue. */
+const businessAi: AiCall = (prompt, schema, system, options) =>
+  openAIStructured(prompt, schema, system, {
+    maxTokens: options.maxTokens,
+    temperature: 0,
+    signal: options.signal,
+    metadata: { stage: options.stage },
+  });
+
 /** Production wiring: real search providers, Bright Data Pages API, cache and CRM. */
 export function createBusinessSearchDeps(): BusinessSearchDeps {
   return {
@@ -124,6 +134,7 @@ export function createBusinessSearchDeps(): BusinessSearchDeps {
       ? async (query, signal) => brightDataSearch(query, { signal })
       : undefined,
     brightDataToken: getBrightDataApiToken(),
+    ai: hasOpenAIKey() ? businessAi : undefined,
     areaSource: isMapDataEnabled()
       ? createOvertureAreaSource({ getRunner: getDuckDbRunner, fetchImpl: safeWebsiteFetch, cache: enrichmentAreaCache })
       : undefined,

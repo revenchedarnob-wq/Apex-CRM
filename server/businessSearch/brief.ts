@@ -14,6 +14,11 @@ export type BusinessSearchSpec = {
   minFollowers: number;
   /** Extra words the Page should mention ("weddings", "vegan"). Used for ranking, not filtering. */
   extras: string[];
+  /**
+   * Conditions in the user's own words that the rules cannot check ("Looks high-end"),
+   * read by the AI (aiJudge.ts). Empty or missing when there are none or no AI is set up.
+   */
+  requirements?: string[];
 };
 
 const FILLER_WORDS = new Set([

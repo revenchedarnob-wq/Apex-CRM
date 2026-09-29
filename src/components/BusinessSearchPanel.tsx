@@ -6,7 +6,8 @@ type BusinessSearchResponse = {
   rejected: Array<{ name: string; pageUrl?: string; reasons: string[] }>;
   progress: string[];
   pagesConfigured: boolean;
-  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; mapOnly?: number; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[];
+  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; mapOnly?: number;
+    ai?: { requirements: string[]; judged: number; rejected: number; error?: string }; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[];
     rounds?: { mapPlaces: number; mapLinked: number; websiteLinked: number; nameMatched: number; nameLookups: number; areaQueries: number };
     area?: { name: string; fromCache: boolean };
     coverage?: { found: number; estimatedTotal: number; percent: number } | null };
@@ -108,6 +109,13 @@ export default function BusinessSearchPanel() {
             {result.stats.mapOnly ? ` Also kept ${result.stats.mapOnly} businesses from the map with no Facebook Page.` : ''}
             {result.stats.saved && ` ${result.stats.saved.created} new in your CRM.`}
           </p>
+          {result.stats.ai && result.stats.ai.requirements.length > 0 && (
+            <p className="text-xs text-slate-400">
+              AI checked {result.stats.ai.judged} businesses for: {result.stats.ai.requirements.join('; ')}
+              {result.stats.ai.rejected ? ` (ruled out ${result.stats.ai.rejected})` : ''}.
+              {result.stats.ai.error && result.stats.ai.judged === 0 ? ' The AI check failed, so only the rules were used.' : ''}
+            </p>
+          )}
           {result.stats.area && result.stats.rounds && (
             <p className="text-xs text-slate-400">
               Map data for {result.stats.area.name}: {result.stats.rounds.mapPlaces} businesses, {result.stats.rounds.mapLinked} with a Facebook link

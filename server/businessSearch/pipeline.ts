@@ -6,6 +6,7 @@ import type { CoverageEstimate } from "./coverage.js";
 import { describeCoverage } from "./coverage.js";
 import type { DiscoveredPage } from "./discover.js";
 import { readFacebookPages, type FetchLike, type PageCache } from "./facebookPages.js";
+import { judgeBusinesses, readBriefWithAi, type AiCall } from "./aiJudge.js";
 import { addressCountry, checkPlaceMatch, splitPlaceAndCountry, type AreaPlace } from "./places.js";
 import { extractOwnerName, qualifyBusiness, type Qualification } from "./qualify.js";
 import { collectCandidates, type Candidate, type CollectDeps, type CollectStats } from "./rounds.js";
@@ -24,6 +25,8 @@ export type BusinessSearchInput = {
 };
 
 export type BusinessSearchDeps = CollectDeps & {
+  /** Reads the brief and judges businesses against it. Optional: rules only without it. */
+  ai?: AiCall;
   brightDataToken?: string;
   fetchImpl?: FetchLike;
   pageCache?: PageCache;
@@ -51,6 +54,8 @@ export type BusinessSearchResult = {
     rejected: number;
     /** Map-listed businesses kept without a Facebook Page. */
     mapOnly: number;
+    /** Businesses the AI checked against the brief's own-words requirements, and how many it ruled out. */
+    ai: { requirements: string[]; judged: number; rejected: number; error?: string };
     saved?: { created: number; updated: number; duplicates: number };
     searchErrors: string[];
     durationMs: number;
@@ -221,13 +226,24 @@ export async function runBusinessSearch(
 ): Promise<BusinessSearchResult> {
   const started = Date.now();
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit || 25)));
-  const spec = parseBusinessBrief(input.query);
+  let spec = parseBusinessBrief(input.query);
+  let aiError: string | undefined;
+  if (deps.ai) {
+    try {
+      spec = await readBriefWithAi(spec, deps.ai, input.signal);
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") throw error;
+      aiError = (error as Error)?.message || String(error);
+      input.onProgress?.("The AI could not read the request, so the simple reader is used and nothing is AI-checked.");
+    }
+  }
   if (spec.categoryTerms.length === 0) {
     throw new Error('Say what kind of business to find, for example "bakeries in Manchester".');
   }
   input.onProgress?.(
     `Looking for ${spec.categoryTerms.join(" ")}${spec.place ? ` in ${spec.place}` : ""}${spec.minFollowers ? ` with ${spec.minFollowers}+ followers` : ""}.`,
   );
+  if (spec.requirements?.length) input.onProgress?.(`The AI will check: ${spec.requirements.join("; ")}.`);
 
   // Collect about 1.5x the target so rejections still leave enough results.
   const collected = await collectCandidates(
@@ -303,33 +319,77 @@ export async function runBusinessSearch(
     });
   });
 
-  const leads = accepted
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((entry) => entry.lead);
+  accepted.sort((a, b) => b.score - a.score);
 
   // Businesses on the map with no Facebook Page still have a phone or website, so keep
   // them too, after the Facebook ones. Skipped when the brief asks for followers, which
   // only a Page has.
-  let mapOnly = 0;
+  const mapOnlyPool: Array<{ lead: Record<string, any>; score: number }> = [];
   if (input.includeMapOnly !== false && spec.minFollowers === 0 && collected.placesWithoutPage.length) {
     const known = deps.existingKeys || new Set<string>();
     const taken = new Set<string>();
-    for (const lead of leads) for (const key of buildBusinessIdentityKeys(lead.business)) taken.add(key);
+    for (const entry of accepted) for (const key of buildBusinessIdentityKeys(entry.lead.business)) taken.add(key);
     const extra = collected.placesWithoutPage
       .map(({ place, checked }) => buildMapOnlyLead(place, checked, spec, now))
       .filter((entry): entry is { lead: Record<string, any>; score: number } => Boolean(entry))
       .sort((a, b) => b.score - a.score);
     for (const entry of extra) {
-      if (mapOnly >= limit) break;
+      if (mapOnlyPool.length >= Math.ceil(limit * 1.5)) break;
       const keys = Array.from(buildBusinessIdentityKeys(entry.lead.business));
       if (keys.some((key) => known.has(key) || taken.has(key))) continue;
       keys.forEach((key) => taken.add(key));
-      leads.push(entry.lead);
-      mapOnly++;
+      mapOnlyPool.push(entry);
     }
-    if (mapOnly) input.onProgress?.(`Also kept ${mapOnly} businesses from the map with no Facebook Page, with their phone or website.`);
   }
+
+  // The AI checks the brief's own-words requirements on businesses that passed the rules.
+  const aiStats: BusinessSearchResult["stats"]["ai"] = { requirements: spec.requirements || [], judged: 0, rejected: 0, error: aiError };
+  let fbKept = accepted;
+  let mapKept = mapOnlyPool;
+  if (deps.ai && spec.requirements?.length && accepted.length + mapOnlyPool.length > 0) {
+    const pool = [...accepted, ...mapOnlyPool];
+    input.onProgress?.(`The AI is checking ${pool.length} businesses against your request.`);
+    const verdicts = await judgeBusinesses(
+      spec,
+      pool.map((entry) => ({ id: entry.lead.id, business: entry.lead.business, onFacebook: entry.lead.source !== "maps" })),
+      deps.ai,
+      {
+        signal: input.signal,
+        onError: (error) => {
+          aiStats.error = (error as Error)?.message || String(error);
+        },
+      },
+    );
+    const judge = (entry: { lead: Record<string, any>; score: number }) => {
+      const verdict = verdicts.get(entry.lead.id);
+      if (!verdict) return true;
+      aiStats.judged++;
+      const reason = `AI check: ${verdict.reason || verdict.verdict}`;
+      if (verdict.verdict === "no") {
+        aiStats.rejected++;
+        rejected.push({ name: entry.lead.business.name, pageUrl: entry.lead.business.pageUrl, reasons: [reason] });
+        return false;
+      }
+      entry.lead.evidenceReasons = [reason, ...(entry.lead.evidenceReasons || [])];
+      if (verdict.verdict === "match") entry.score += 1.5;
+      else {
+        entry.score -= 0.5;
+        entry.lead.reviewStatus = "MAYBE";
+      }
+      return true;
+    };
+    fbKept = accepted.filter(judge).sort((a, b) => b.score - a.score);
+    mapKept = mapOnlyPool.filter(judge).sort((a, b) => b.score - a.score);
+    if (aiStats.error && aiStats.judged === 0) input.onProgress?.("The AI check failed, so the rules result is used.");
+  }
+
+  const leads = fbKept.slice(0, limit).map((entry) => entry.lead);
+  qualified = leads.filter((lead) => lead.reviewStatus !== "MAYBE").length;
+  maybe = leads.length - qualified;
+  const mapOnlyLeads = mapKept.slice(0, limit).map((entry) => entry.lead);
+  const mapOnly = mapOnlyLeads.length;
+  leads.push(...mapOnlyLeads);
+  if (mapOnly) input.onProgress?.(`Also kept ${mapOnly} businesses from the map with no Facebook Page, with their phone or website.`);
   const saved = deps.persist && leads.length > 0 ? deps.persist(leads) : undefined;
   if (collected.area) input.onProgress?.(describeCoverage(collected.coverage));
   input.onProgress?.(
@@ -352,6 +412,7 @@ export async function runBusinessSearch(
       maybe,
       rejected: rejected.length,
       mapOnly,
+      ai: aiStats,
       saved,
       searchErrors: collected.stats.searchErrors,
       durationMs: Date.now() - started,
