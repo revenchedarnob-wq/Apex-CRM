@@ -1,3 +1,4 @@
+import { fetch as undiciFetch } from "undici";
 import type { BusinessDetails } from "../../src/types.js";
 import {
   getEnrichmentCacheEntry,
@@ -7,8 +8,12 @@ import {
 } from "../db.js";
 import { brightDataSearch, isBrightDataConfigured } from "../services/brightdata.js";
 import { parseApiKeys } from "../services/keyRotator.js";
-import { hasTavilyKey, tavilySearch } from "../services/llm.js";
-import type { PageCache } from "./facebookPages.js";
+import { hasOpenAIKey, hasTavilyKey, openAIStructured, tavilySearch } from "../services/llm.js";
+import type { AiCall } from "./aiJudge.js";
+import { ssrfSafeDispatcher } from "../leadSearch/siteProbe.js";
+import type { FetchLike, PageCache } from "./facebookPages.js";
+import { createOvertureAreaSource, loadDuckDbQueryRunner, type AreaCache, type QueryRunner } from "./overture.js";
+import type { AreaLoad } from "./places.js";
 import type { BusinessSearchDeps } from "./pipeline.js";
 
 const PAGE_CACHE_PROVIDER = "brightdata_facebook_page";
@@ -40,6 +45,51 @@ export const enrichmentPageCache: PageCache = {
   },
 };
 
+const AREA_CACHE_PROVIDER = "overture_area";
+// Overture publishes a new release every month.
+const AREA_CACHE_TTL_DAYS = 30;
+
+/** Area business lists live in the shared enrichment cache, so a second search of an area is free. */
+export const enrichmentAreaCache: AreaCache = {
+  get(key) {
+    const entry = getEnrichmentCacheEntry({ normalizedUrl: key });
+    if (!entry || entry.sourceProvider !== AREA_CACHE_PROVIDER) return null;
+    try {
+      const parsed = JSON.parse(entry.evidenceBlock) as AreaLoad;
+      return parsed && Array.isArray(parsed.places) ? parsed : null;
+    } catch {
+      return null;
+    }
+  },
+  set(key, load) {
+    upsertEnrichmentCacheEntry(
+      {
+        normalizedUrl: key,
+        companyName: load.areaName,
+        evidenceBlock: JSON.stringify({ ...load, fromCache: false }),
+        scrapeQuality: "good",
+        sourceProvider: AREA_CACHE_PROVIDER,
+      },
+      AREA_CACHE_TTL_DAYS,
+    );
+  },
+};
+
+/** Fetch for business websites that refuses private and internal addresses, redirects included. */
+const safeWebsiteFetch: FetchLike = (url, init) =>
+  undiciFetch(url, { ...(init as any), dispatcher: ssrfSafeDispatcher }) as unknown as Promise<Response>;
+
+// One DuckDB connection for the whole app, opened on first use.
+let duckDbRunner: Promise<QueryRunner | null> | null = null;
+const getDuckDbRunner = () => {
+  duckDbRunner ??= loadDuckDbQueryRunner().catch(() => null);
+  return duckDbRunner;
+};
+
+export function isMapDataEnabled(): boolean {
+  return !/^(?:0|false|off|no)$/i.test(String(process.env.BUSINESS_MAP_DATA || "").trim());
+}
+
 export function getBrightDataApiToken(): string | undefined {
   return parseApiKeys(process.env.BRIGHTDATA_API_TOKEN, [
     process.env.BRIGHTDATA_API_TOKENS,
@@ -53,6 +103,15 @@ export function isBusinessSearchConfigured() {
     pages: Boolean(getBrightDataApiToken()),
   };
 }
+
+/** Any configured AI provider (OpenRouter, Atria, Byesu...), through the app's shared LLM queue. */
+const businessAi: AiCall = (prompt, schema, system, options) =>
+  openAIStructured(prompt, schema, system, {
+    maxTokens: options.maxTokens,
+    temperature: 0,
+    signal: options.signal,
+    metadata: { stage: options.stage },
+  });
 
 /** Production wiring: real search providers, Bright Data Pages API, cache and CRM. */
 export function createBusinessSearchDeps(): BusinessSearchDeps {
@@ -75,6 +134,11 @@ export function createBusinessSearchDeps(): BusinessSearchDeps {
       ? async (query, signal) => brightDataSearch(query, { signal })
       : undefined,
     brightDataToken: getBrightDataApiToken(),
+    ai: hasOpenAIKey() ? businessAi : undefined,
+    areaSource: isMapDataEnabled()
+      ? createOvertureAreaSource({ getRunner: getDuckDbRunner, fetchImpl: safeWebsiteFetch, cache: enrichmentAreaCache })
+      : undefined,
+    websiteFetch: safeWebsiteFetch,
     pageCache: enrichmentPageCache,
     existingKeys: readExistingIdentityKeys(),
     persist: (leads) => {

@@ -188,6 +188,11 @@ const LeadTableRow = React.memo(
               {LEAD_SOURCE_LABELS.facebook}
             </Badge>
           )}
+          {leadSource === 'maps' && (
+            <Badge variant="outline" className="h-5 px-1.5 text-xs font-medium text-slate-300 border-slate-500/30">
+              No Facebook Page
+            </Badge>
+          )}
         </div>
         {business?.ownerName && (
           <div className="mt-1 truncate text-xs text-slate-400" title={`Owner name from ${business.ownerSource || 'unknown source'}`}>

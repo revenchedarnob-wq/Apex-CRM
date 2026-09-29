@@ -75,6 +75,16 @@ $hasTavily = Read-Key 'TAVILY_API_KEY' 'Tavily API key'
 $hasAtria = Read-Key 'ATRIA_API_KEY' 'Atria API key'
 if ($hasAtria) { Set-EnvValue 'ATRIA_PRIORITY' 'primary' }
 $hasOpenAI = Read-Key 'OPENAI_API_KEY' 'Byesu / OpenAI-compatible API key'
+$hasOpenRouter = Read-Key 'OPENROUTER_API_KEY' 'OpenRouter API key (free AI models)'
+if ($hasOpenRouter) {
+  Set-EnvValue 'OPENROUTER_BASE_URL' 'https://openrouter.ai/api/v1'
+  Set-EnvValue 'OPENROUTER_MODEL' 'nvidia/nemotron-3-super-120b-a12b:free'
+  Set-EnvValue 'OPENROUTER_PROVIDER_NAME' 'OpenRouter'
+}
+# Example keys such as "sk-..." count as set and make every AI call try them first, so clear them.
+foreach ($name in 'OPENAI_API_KEY', 'BYESU_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY') {
+  if ((Get-Content '.env' -Raw) -match "(?m)^\s*$name\s*=\s*`"?[a-z-]*\.\.\.`"?\s*$") { Set-EnvValue $name '' }
+}
 Set-EnvValue 'DISCOVERY_PROVIDER_MODE' 'hybrid'
 
 # 5. Summary
@@ -83,9 +93,9 @@ $envText = Get-Content '.env' -Raw
 function Test-Configured($name, $placeholderPattern) {
   return ($envText -match "(?m)^\s*$name\s*=\s*`"?([^`"\r\n]+)") -and ($Matches[1] -notmatch $placeholderPattern)
 }
-$aiReady = (Test-Configured 'ATRIA_API_KEY' '^$') -or (Test-Configured 'OPENAI_API_KEY' '^sk-\.\.\.$')
+$aiReady = (Test-Configured 'ATRIA_API_KEY' '^$') -or (Test-Configured 'OPENAI_API_KEY' '^sk-\.\.\.$') -or (Test-Configured 'OPENROUTER_API_KEY' '^sk-or-\.\.\.$')
 $searchReady = (Test-Configured 'BRIGHTDATA_API_TOKEN' '^MY_BRIGHTDATA') -or (Test-Configured 'TAVILY_API_KEY' '^MY_TAVILY')
-Write-Host ("AI key:      " + ($(if ($aiReady) { 'ready' } else { 'MISSING (add Atria or Byesu/OpenAI)' })))
+Write-Host ("AI key:      " + ($(if ($aiReady) { 'ready' } else { 'MISSING (add OpenRouter, Atria or Byesu/OpenAI)' })))
 Write-Host ("Search key:  " + ($(if ($searchReady) { 'ready' } else { 'MISSING (add Bright Data or Tavily)' })))
 if (-not ($aiReady -and $searchReady)) {
   Write-Host "`nLead search needs at least one AI key and one search key. Run this script again to add them." -ForegroundColor Yellow

@@ -171,7 +171,7 @@ export const NEXT_ACTIONS = ['NONE', 'OPEN_LINKEDIN', 'OPEN_FACEBOOK', 'RESEARCH
 /** A lead is either a person (LinkedIn-first discovery) or a business (for example a Facebook Page). */
 export const LEAD_KINDS = ['person', 'business'] as const;
 /** Where a lead came from. Derived by getLeadSource() when not stored explicitly. */
-export const LEAD_SOURCES = ['linkedin', 'facebook', 'import', 'manual', 'other'] as const;
+export const LEAD_SOURCES = ['linkedin', 'facebook', 'maps', 'import', 'manual', 'other'] as const;
 
 export type LeadStage = typeof LEAD_STAGES[number];
 export type ReviewStatus = typeof REVIEW_STATUSES[number];

@@ -14,13 +14,32 @@ export type BusinessSearchSpec = {
   minFollowers: number;
   /** Extra words the Page should mention ("weddings", "vegan"). Used for ranking, not filtering. */
   extras: string[];
+  /**
+   * Conditions in the user's own words that the rules cannot check ("Looks high-end"),
+   * read by the AI (aiJudge.ts). Empty or missing when there are none or no AI is set up.
+   */
+  requirements?: string[];
+  /** Other names for the trade from the AI ("apparel brand" for "clothing brand"). */
+  synonyms?: string[];
+  /** How many businesses the brief asks for ("find 10 bakeries"), when it says. */
+  requestedCount?: number;
+  /** True when the brief asks for independent or local businesses, so chains are left out. */
+  localOnly?: boolean;
 };
+
+const LOCAL_ONLY = /\b(?:independent|independently|local|small|family[- ]?(?:run|owned)?)\b/i;
+
+// "find 10 bakeries", "get me 25 salons", "10 plumbers in Leeds". Not "10k followers".
+const COUNT_PATTERN =
+  /^\s*(?:(?:please\s+)?(?:find|get|show|list|give|search|search\s+for|look\s+for)\s+)?(?:me\s+)?(?:about\s+|around\s+|up\s+to\s+|top\s+)?(\d{1,3})\s+(?!k\b|thousand\b|\+|followers|likes|fans)/i;
 
 const FILLER_WORDS = new Set([
   'a', 'an', 'the', 'find', 'me', 'get', 'show', 'list', 'search', 'for', 'some', 'any', 'all',
   'local', 'small', 'business', 'businesses', 'company', 'companies', 'shop', 'shops', 'store',
   'stores', 'page', 'pages', 'facebook', 'fb', 'on', 'that', 'which', 'who', 'are', 'is',
   'with', 'and', 'or', 'of', 'to', 'please', 'owners', 'owner',
+  // Describe the kind of business, not its trade; rounds.ts uses them to leave chains out.
+  'independent', 'independently', 'family', 'family-run', 'family-owned', 'run', 'owned',
 ]);
 
 // Words that start the "extras" part of a brief: "bakeries in Leeds that do weddings".
@@ -49,6 +68,14 @@ export function singularize(word: string): string {
 
 export function parseBusinessBrief(brief: string): BusinessSearchSpec {
   let rest = ` ${String(brief || '').replace(/\s+/g, ' ').trim()} `;
+
+  let requestedCount: number | undefined;
+  const count = rest.match(COUNT_PATTERN);
+  if (count) {
+    const value = Number(count[1]);
+    if (value >= 1 && value <= 100) requestedCount = value;
+    rest = ` ${rest.slice(count[0].length)}`;
+  }
 
   let minFollowers = 0;
   const followers = rest.match(FOLLOWERS_PATTERN);
@@ -92,5 +119,7 @@ export function parseBusinessBrief(brief: string): BusinessSearchSpec {
     place,
     minFollowers,
     extras,
+    ...(requestedCount ? { requestedCount } : {}),
+    localOnly: LOCAL_ONLY.test(String(brief || '')),
   };
 }
