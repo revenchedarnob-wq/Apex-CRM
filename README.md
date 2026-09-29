@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/badge/TailwindCSS-4.3-38B2AC?logo=tailwind-css&logoColor=white" alt="Tailwind CSS" />
     <img src="https://img.shields.io/badge/SQLite-Schema_v23-003B57?logo=sqlite&logoColor=white" alt="SQLite schema v23" />
     <img src="https://img.shields.io/badge/TypeScript-7.0-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Lead_Engine-Passing-10B981" alt="Lead Engine Tests" />
+    <a href="https://github.com/revenchedarnob-wq/Apex-CRM/actions/workflows/ci.yml"><img src="https://github.com/revenchedarnob-wq/Apex-CRM/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   </p>
 </div>
 
