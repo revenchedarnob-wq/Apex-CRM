@@ -4,6 +4,8 @@ import {
   LEAD_STAGE_SET as leadStages,
   REVIEW_STATUS_SET as reviewStatuses,
   NEXT_ACTION_SET as nextActions,
+  LEAD_KIND_SET as leadKinds,
+  LEAD_SOURCE_SET as leadSources,
 } from "../../src/types.js";
 import {
   readLeadsSummary,
@@ -94,6 +96,8 @@ import {
   SessionAlreadyActiveError,
 } from "../leadSearch/discoveryEngine.js";
 import { sessionStreamHub } from "../services/sessionStreamHub.js";
+import { runBusinessSearch } from "../businessSearch/pipeline.js";
+import { createBusinessSearchDeps, isBusinessSearchConfigured } from "../businessSearch/runtime.js";
 
 const router = Router();
 
@@ -151,7 +155,15 @@ const isPersistableLead = (lead: unknown): lead is Record<string, any> => {
     leadStages.has(value.stage) &&
     (value.reviewStatus === undefined ||
       reviewStatuses.has(value.reviewStatus)) &&
-    (value.nextAction === undefined || nextActions.has(value.nextAction)),
+    (value.nextAction === undefined || nextActions.has(value.nextAction)) &&
+    (value.kind === undefined || leadKinds.has(value.kind)) &&
+    (value.source === undefined || leadSources.has(value.source)) &&
+    (value.business === undefined ||
+      (Boolean(value.business) &&
+        typeof value.business === "object" &&
+        !Array.isArray(value.business) &&
+        typeof value.business.name === "string" &&
+        value.business.name.trim().length > 0)),
   );
 };
 
@@ -181,6 +193,8 @@ router.get("/leads", (req, res): any => {
       stage,
       reviewStatus,
       nextAction,
+      kind,
+      source,
       search,
       limit,
       offset,
@@ -198,6 +212,8 @@ router.get("/leads", (req, res): any => {
       !stage &&
       !reviewStatus &&
       !nextAction &&
+      !kind &&
+      !source &&
       !search &&
       !isSummary &&
       parsedLimit === undefined &&
@@ -224,6 +240,8 @@ router.get("/leads", (req, res): any => {
       stage,
       reviewStatus,
       nextAction,
+      kind,
+      source,
       search,
       limit: parsedLimit,
       offset: parsedOffset,
@@ -1965,6 +1983,41 @@ router.delete("/outreach-drafts/:id", (req, res): any => {
     res
       .status(500)
       .json({ error: error.message || "Failed to delete outreach draft." });
+  }
+});
+
+router.get("/find-businesses/status", (_req, res) => {
+  res.json(isBusinessSearchConfigured());
+});
+
+router.post("/find-businesses", paidRouteLimit("find-businesses", 10), async (req, res): Promise<any> => {
+  const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
+  const limit = Number(req.body?.limit ?? 25);
+  if (!query || query.length > 2000) {
+    return res.status(400).json({ error: "Describe the businesses to find (up to 2,000 characters)." });
+  }
+  if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
+    return res.status(400).json({ error: "limit must be between 1 and 100." });
+  }
+  const config = isBusinessSearchConfigured();
+  if (!config.search) {
+    return res.status(503).json({ error: "No web search provider is configured. Add TAVILY_API_KEY or Bright Data SERP settings to .env." });
+  }
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+  try {
+    const progress: string[] = [];
+    const result = await runBusinessSearch(
+      { query, limit, signal: controller.signal, onProgress: (message) => progress.push(message) },
+      createBusinessSearchDeps(),
+    );
+    res.json({ ...result, progress, pagesConfigured: config.pages });
+  } catch (error: any) {
+    if (error?.name === "AbortError") return;
+    const message = error?.message || "Business search failed.";
+    res.status(message.startsWith("Say what kind of business") ? 400 : 500).json({ error: message });
   }
 });
 

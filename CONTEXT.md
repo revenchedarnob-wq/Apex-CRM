@@ -112,3 +112,6 @@ The persistence rule in `upsertLeadInExistingTransaction` (`server/db.ts`) that 
 ### Binary Outcome Feedback (`lead_outcomes`)
 The closed-loop disposition table (schema v23) recording `positive` (`KEEP`, `VERIFIED`, `CONVERTED`, `CLOSED_WON`, `MEETING BOOKED`, `REPLIED`) and `negative` (`REJECT`, `REJECTED`, `LOST`, `UNQUALIFIED`) transitions. Outcome events update both the global outcome rate boost in `scoreAdaptiveArm` and cluster-scoped `query_performance` counters via top-level `discoveryFamily` and `discoveryLane` attribution.
 
+
+### Business Lead (`kind: 'business'`)
+A lead that is a business rather than a person, such as a small business found through its public Facebook Page (schema v24). Its structured facts live in `lead.business` (Page URL and id, category, address, phones, emails, websites, followers, rating, optional owner name with its source). For compatibility `profile.fullName` and `profile.currentCompany` hold the business name, so every existing view works unchanged. `leads.kind` and `leads.source` are promoted columns for filtering. Business leads also de-duplicate on Facebook Page id or username, website domain and phone number; those keys are never applied to people, because colleagues share a company website.

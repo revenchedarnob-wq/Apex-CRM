@@ -36,6 +36,7 @@ import { buildProfileDedupeKeys } from './utils/leadDedupe';
 
 // Large workspaces load only when the user opens their tab.
 const ScrapeWorkspace = lazy(() => import('./components/ScrapeWorkspace'));
+const BusinessSearchPanel = lazy(() => import('./components/BusinessSearchPanel'));
 const CrmPipeline = lazy(() => import('./components/CrmPipeline'));
 const LeadTable = lazy(() => import('./components/LeadTable'));
 const OutreachStudio = lazy(() => import('./components/OutreachStudio'));
@@ -168,6 +169,7 @@ function Dashboard() {
     return new Set(initialTab === 'workspace' || initialTab === 'inventory' ? [initialTab] : []);
   });
   const [hasLoadedCopilot, setHasLoadedCopilot] = useState(false);
+  const [discoverMode, setDiscoverMode] = useState<'people' | 'businesses'>('people');
   const [selectedLeadForOutreach, setSelectedLeadForOutreach] = useState<Lead | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualName, setManualName] = useState('');
@@ -413,9 +415,25 @@ function Dashboard() {
                   <h2 id="discover-heading" className="text-2xl font-extrabold text-white tracking-tight">Discover prospects</h2>
                   <p className="text-sm leading-6 text-slate-400 mt-1">Find qualified people, review the evidence, then add only the prospects you want to enrich.</p>
                 </div>
+                <div role="group" aria-label="What to discover" className="mb-4 inline-flex rounded-lg border border-slate-800 bg-slate-900/60 p-1">
+                  {([['people', 'People on LinkedIn'], ['businesses', 'Businesses on Facebook']] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={discoverMode === mode}
+                      onClick={() => setDiscoverMode(mode)}
+                      className={`rounded-md px-3 py-1.5 text-sm font-semibold ${discoverMode === mode ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <Suspense fallback={<TabLoading />}>
                   <TabErrorBoundary tabName="Discover prospects">
-                    <ScrapeWorkspace />
+                    <div hidden={discoverMode !== 'people'}>
+                      <ScrapeWorkspace />
+                    </div>
+                    {discoverMode === 'businesses' && <BusinessSearchPanel />}
                   </TabErrorBoundary>
                 </Suspense>
               </motion.section>

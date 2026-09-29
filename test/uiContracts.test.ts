@@ -89,7 +89,7 @@ test('prospect UI defaults remain valid and inventory stays at 100 rows per page
   assert.equal(PROSPECTS_PAGE_SIZE, 100);
   assert.ok(MANUAL_PROSPECT_INDUSTRIES.includes(DEFAULT_MANUAL_INDUSTRY));
   assert.deepEqual(REVIEW_STATUS_OPTIONS.map(option => option.value), ['UNREVIEWED', 'KEEP', 'MAYBE', 'REJECT']);
-  assert.deepEqual(NEXT_ACTION_OPTIONS.map(option => option.value), ['NONE', 'OPEN_LINKEDIN', 'RESEARCH', 'CONNECT', 'MESSAGE']);
+  assert.deepEqual(NEXT_ACTION_OPTIONS.map(option => option.value), ['NONE', 'OPEN_LINKEDIN', 'OPEN_FACEBOOK', 'RESEARCH', 'CONNECT', 'MESSAGE', 'CALL', 'EMAIL']);
 });
 
 test('prospect UI keeps email while exposing no dedicated discovery controls', () => {

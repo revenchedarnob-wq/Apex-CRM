@@ -24,11 +24,11 @@ test.after(() => {
   } catch {}
 });
 
-test("Stream 1: FTS Integrity, Schema v23, and Zero Fan-out Joins", async (t) => {
-  await t.test("Schema version is 23 and company index exists", () => {
+test("Stream 1: FTS Integrity, Schema v24, and Zero Fan-out Joins", async (t) => {
+  await t.test("Schema version is 24 and company index exists", () => {
     const db = getLeadsDb();
     const versionRow = db.prepare("PRAGMA user_version").get() as { user_version: number };
-    assert.equal(versionRow.user_version, 23, "Schema version must be 23");
+    assert.equal(versionRow.user_version, 24, "Schema version must be 24");
 
     const indexRow = db
       .prepare(
