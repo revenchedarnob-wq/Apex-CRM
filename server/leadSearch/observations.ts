@@ -120,8 +120,9 @@ export const looksLikeCompanyHint = (value: string) => {
   const candidate = cleanCompanyHint(value);
   if (candidate.length < 3 || candidate.length > 65) return false;
   if (!/[a-z0-9]/i.test(candidate)) return false;
-  // Reject strings starting with a lowercase letter (e.g. "r/curtin", "how to survive...", "index")
-  if (/^[a-z]/.test(candidate)) return false;
+  // Reject lowercase-led phrases (e.g. "how to survive...", "r/curtin"), but keep single
+  // slug-like tokens such as "novalabs" from hosted-job paths, domains and LinkedIn company URLs.
+  if (/^[a-z]/.test(candidate) && !/^[a-z0-9][a-z0-9-]*$/.test(candidate)) return false;
   // Reject Reddit sub paths or questions/exclamations
   if (/^\/?r\//i.test(candidate) || /[?!]/.test(candidate)) return false;
   const lower = candidate.toLowerCase();

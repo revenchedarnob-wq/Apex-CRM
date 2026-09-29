@@ -151,7 +151,7 @@ test('extractCompanyHintDeterministic extracts company from title, hosted path, 
   assert.equal(extractCompanyHintDeterministic(obsDomain), 'apexautomation');
 });
 
-test('extractCompanyHintFromProfile uses structured data and LinkedIn header layout', () => {
+test('extractCompanyHintFromProfile uses structured data, not the LinkedIn header layout', () => {
   const structured = observation({
     url: 'https://www.linkedin.com/in/johndoe',
     raw: { currentCompany: 'TechFlow AI' }
@@ -162,7 +162,8 @@ test('extractCompanyHintFromProfile uses structured data and LinkedIn header lay
     url: 'https://www.linkedin.com/in/janedoe',
     content: '# Jane Doe\nNova Automation Partners\nLondon, England, United Kingdom\n500 connections'
   });
-  assert.equal(extractCompanyHintFromProfile(header), 'Nova Automation Partners');
+  // The second header line is usually the headline, so it is no longer read as the company.
+  assert.equal(extractCompanyHintFromProfile(header), '');
 });
 
 test('extracted currentCompany attaches the correct open-web signal', () => {
