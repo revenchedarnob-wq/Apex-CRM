@@ -2010,7 +2010,13 @@ router.post("/find-businesses", paidRouteLimit("find-businesses", 10), async (re
   try {
     const progress: string[] = [];
     const result = await runBusinessSearch(
-      { query, limit, signal: controller.signal, onProgress: (message) => progress.push(message) },
+      {
+        query,
+        limit,
+        includeMapOnly: req.body?.includeMapOnly !== false,
+        signal: controller.signal,
+        onProgress: (message) => progress.push(message),
+      },
       createBusinessSearchDeps(),
     );
     res.json({ ...result, progress, pagesConfigured: config.pages });

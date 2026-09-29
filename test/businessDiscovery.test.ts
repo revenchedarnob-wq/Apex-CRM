@@ -375,3 +375,39 @@ test('a Page in a synonym category still qualifies', async () => {
   const result = qualifyBusiness({ name: 'Vanilla Ice Cakes', category: 'Cupcake Shop', address: '1 Road, Manchester', dataQuality: 'full' }, spec);
   assert.equal(result.checks.category, 'pass');
 });
+
+describe('businesses with no Facebook Page', () => {
+  const mapped = place({ id: 'm1', name: 'Mapped Bakery', phones: ['0161 555 0101'], websites: [], facebookPages: [{ key: 'facebook:user:mappedbakery', url: 'https://www.facebook.com/mappedbakery', username: 'mappedbakery' }] });
+  const noPage = place({ id: 'p1', name: 'Quiet Loaf', phones: ['0161 555 0199'], websites: ['https://quietloaf.co.uk'] });
+  const noContact = place({ id: 'p2', name: 'Ghost Bakery', phones: [], websites: [] });
+  const deps = (existingKeys = new Set<string>()) => ({
+    areaSource: { load: async () => ({ places: [mapped, noPage, noContact], areaName: 'Manchester, GB', country: 'GB', fromCache: false }) },
+    websiteFetch: async () => new Response('<p>no social links</p>', { headers: { 'content-type': 'text/html' } }),
+    tavilySearch: async () => [],
+    existingKeys,
+  });
+
+  test('keeps map businesses with a phone or website, after the Facebook ones', async () => {
+    const result = await runBusinessSearch({ query: 'bakeries in Manchester, UK', limit: 5 }, deps());
+    assert.deepEqual(result.leads.map((lead) => lead.business.name), ['Mapped Bakery', 'Quiet Loaf']);
+    const lead = result.leads[1];
+    assert.equal(lead.source, 'maps');
+    assert.equal(lead.nextAction, 'CALL');
+    assert.equal(lead.business.pageUrl, undefined);
+    assert.deepEqual(lead.tags, ['no-facebook']);
+    assert.ok(lead.evidenceReasons.some((reason: string) => /No Facebook Page found/.test(reason)));
+    assert.equal(result.stats.mapOnly, 1);
+  });
+
+  test('can be turned off, and skips businesses already in the CRM', async () => {
+    const off = await runBusinessSearch({ query: 'bakeries in Manchester, UK', limit: 5, includeMapOnly: false }, deps());
+    assert.deepEqual(off.leads.map((lead) => lead.business.name), ['Mapped Bakery']);
+    const known = await runBusinessSearch({ query: 'bakeries in Manchester, UK', limit: 5 }, deps(new Set(['domain:quietloaf.co.uk'])));
+    assert.equal(known.stats.mapOnly, 0);
+  });
+
+  test('are left out when the brief asks for followers', async () => {
+    const result = await runBusinessSearch({ query: 'bakeries in Manchester, UK with 500+ followers', limit: 5 }, deps());
+    assert.equal(result.stats.mapOnly, 0);
+  });
+});

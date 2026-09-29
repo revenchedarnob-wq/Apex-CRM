@@ -39,6 +39,7 @@ export function getLeadSource(lead: unknown): LeadSource {
 export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   linkedin: 'LinkedIn',
   facebook: 'Facebook',
+  maps: 'Map listing',
   import: 'Imported',
   manual: 'Added manually',
   other: 'Other',

@@ -47,6 +47,12 @@ export type CollectResult = {
   coverage: CoverageEstimate | null;
   queries: string[];
   stats: CollectStats;
+  /**
+   * Map-listed businesses with no Facebook Page among the results. `checked` is true when
+   * their website or a name search was tried and found none; false when the search
+   * stopped at its target before reaching them.
+   */
+  placesWithoutPage: Array<{ place: AreaPlace; checked: boolean }>;
 };
 
 const LIST_VIA = new Set<FoundVia>(["map", "website", "name"]);
@@ -79,6 +85,7 @@ export async function collectCandidates(
   };
   const queries: string[] = [];
   const linkedPlaceIds = new Set<string>();
+  const checkedPlaceIds = new Set<string>();
 
   const newCount = () => Array.from(pages.keys()).filter((key) => !known.has(key)).length;
   const enough = () => newCount() >= target || Boolean(options.signal?.aborted);
@@ -162,6 +169,7 @@ export async function collectCandidates(
         4,
         async (place) => {
           stats.websitesChecked++;
+          checkedPlaceIds.add(place.id);
           for (const site of place.websites.filter(isCheckableWebsite).slice(0, 1)) {
             const page = await findFacebookOnWebsite(site, { fetchImpl: deps.websiteFetch!, signal: options.signal });
             if (page) {
@@ -196,6 +204,7 @@ export async function collectCandidates(
           return;
         }
         stats.searchResults += hits.length;
+        checkedPlaceIds.add(place.id);
         const match = pickLookupHit(place, hits);
         if (match) {
           add({ ...match, query, provider: searchProvider }, "name", place);
@@ -239,5 +248,8 @@ export async function collectCandidates(
     )
     .slice(0, target);
   const coverage = area ? estimateCoverage(listKeys, searchKeys) : null;
-  return { candidates, area, coverage, queries, stats };
+  const placesWithoutPage = places
+    .filter((place) => !linkedPlaceIds.has(place.id))
+    .map((place) => ({ place, checked: checkedPlaceIds.has(place.id) }));
+  return { candidates, area, coverage, queries, stats, placesWithoutPage };
 }

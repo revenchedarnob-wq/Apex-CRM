@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { useLeads } from '../context/LeadContext';
 
 type BusinessSearchResponse = {
-  leads: Array<{ id: string; business?: { name: string; pageUrl?: string; category?: string; city?: string; followers?: number; ownerName?: string }; reviewStatus?: string; evidenceReasons?: string[] }>;
+  leads: Array<{ id: string; source?: string; business?: { name: string; pageUrl?: string; category?: string; city?: string; followers?: number; ownerName?: string }; reviewStatus?: string; evidenceReasons?: string[] }>;
   rejected: Array<{ name: string; pageUrl?: string; reasons: string[] }>;
   progress: string[];
   pagesConfigured: boolean;
-  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[];
+  stats: { pagesFound: number; pagesRead: number; pagesFromCache: number; qualified: number; maybe: number; rejected: number; mapOnly?: number; saved?: { created: number; updated: number; duplicates: number }; searchErrors: string[];
     rounds?: { mapPlaces: number; mapLinked: number; websiteLinked: number; nameMatched: number; nameLookups: number; areaQueries: number };
     area?: { name: string; fromCache: boolean };
     coverage?: { found: number; estimatedTotal: number; percent: number } | null };
@@ -17,6 +17,7 @@ export default function BusinessSearchPanel() {
   const { rehydrateLeads } = useLeads();
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(25);
+  const [includeMapOnly, setIncludeMapOnly] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<BusinessSearchResponse | null>(null);
@@ -39,7 +40,7 @@ export default function BusinessSearchPanel() {
       const res = await fetch('/api/find-businesses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query.trim(), limit }),
+        body: JSON.stringify({ query: query.trim(), limit, includeMapOnly }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Search failed (${res.status})`);
@@ -78,6 +79,10 @@ export default function BusinessSearchPanel() {
             onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
             className="w-20 rounded-lg border border-slate-700 bg-slate-950 p-1.5 text-sm text-white"
           />
+          <label className="flex items-center gap-1.5 text-sm text-slate-400">
+            <input type="checkbox" checked={includeMapOnly} onChange={(e) => setIncludeMapOnly(e.target.checked)} />
+            Also keep businesses with no Facebook Page
+          </label>
           <button
             type="submit"
             disabled={running || !query.trim()}
@@ -99,7 +104,8 @@ export default function BusinessSearchPanel() {
       {result && (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3" aria-live="polite">
           <p className="text-sm text-slate-300">
-            Found {result.stats.pagesFound} Pages, kept {result.leads.length} ({result.stats.qualified} qualified, {result.stats.maybe} to review), rejected {result.stats.rejected}.
+            Found {result.stats.pagesFound} Pages, kept {result.leads.length - (result.stats.mapOnly || 0)} ({result.stats.qualified} qualified, {result.stats.maybe} to review), rejected {result.stats.rejected}.
+            {result.stats.mapOnly ? ` Also kept ${result.stats.mapOnly} businesses from the map with no Facebook Page.` : ''}
             {result.stats.saved && ` ${result.stats.saved.created} new in your CRM.`}
           </p>
           {result.stats.area && result.stats.rounds && (
@@ -138,6 +144,7 @@ export default function BusinessSearchPanel() {
                   ) : (
                     <span className="font-semibold text-white">{lead.business?.name}</span>
                   )}
+                  {lead.source === 'maps' && <span className="rounded bg-slate-700 px-1.5 text-xs text-slate-300">No Facebook Page</span>}
                   {lead.reviewStatus === 'MAYBE' && <span className="rounded bg-amber-500/20 px-1.5 text-xs text-amber-300">Review</span>}
                 </div>
                 <p className="text-slate-400">

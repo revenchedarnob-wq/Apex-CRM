@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import type { BusinessDetails } from "../../src/types.js";
 import { parseBusinessBrief, type BusinessSearchSpec } from "./brief.js";
-import { canonicalFacebookPage } from "../../src/utils/leadDedupe.js";
+import { buildBusinessIdentityKeys, canonicalFacebookPage } from "../../src/utils/leadDedupe.js";
 import type { CoverageEstimate } from "./coverage.js";
 import { describeCoverage } from "./coverage.js";
 import type { DiscoveredPage } from "./discover.js";
@@ -14,6 +14,11 @@ export type BusinessSearchInput = {
   query: string;
   /** How many businesses to return (1-100). */
   limit: number;
+  /**
+   * Also keep map-listed businesses with no Facebook Page (up to `limit` more), with
+   * their phone, website and address from the map data. On unless set to false.
+   */
+  includeMapOnly?: boolean;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
 };
@@ -44,6 +49,8 @@ export type BusinessSearchResult = {
     qualified: number;
     maybe: number;
     rejected: number;
+    /** Map-listed businesses kept without a Facebook Page. */
+    mapOnly: number;
     saved?: { created: number; updated: number; duplicates: number };
     searchErrors: string[];
     durationMs: number;
@@ -173,6 +180,35 @@ export function buildBusinessLead(
 }
 
 /**
+ * Builds a lead for a business the map data lists but no Facebook Page was found for.
+ * Its contact details come from the map listing, so it can still be called or emailed.
+ */
+export function buildMapOnlyLead(
+  place: AreaPlace,
+  checked: boolean,
+  spec: BusinessSearchSpec,
+  now = new Date().toISOString(),
+): { lead: Record<string, any>; score: number } | null {
+  const business = mergePlaceDetails({ name: place.name, dataQuality: "full", fetchedAt: now }, place);
+  if (!business.phones?.length && !business.emails?.length && !business.websites?.length) return null;
+  const qualification = qualifyBusiness(business, spec);
+  if (qualification.verdict === "rejected") return null;
+  const reasons = [
+    "Found in map data",
+    checked ? "No Facebook Page found (website and name search checked)" : "Facebook not checked (search stopped at its target)",
+    ...qualification.reasons.map((reason) => reason.replace(/ on the Page$/, "")),
+  ];
+  const lead = buildBusinessLead(`place:${place.id}`, business, { ...qualification, reasons }, spec, now);
+  lead.source = "maps";
+  lead.nextAction = business.phones?.length ? "CALL" : business.emails?.length ? "EMAIL" : "RESEARCH";
+  lead.tags = [checked ? "no-facebook" : "facebook-unchecked"];
+  lead.evidence = { sourceQuery: spec.brief, sourceUrl: business.websites?.[0] };
+  delete lead.sourceProvider;
+  // Checked businesses first: they are known to have no Page.
+  return { lead, score: qualification.score + (checked ? 0.5 : 0) + (place.brand ? -1 : 0) };
+}
+
+/**
  * Finds businesses through their public Facebook Pages:
  * brief -> collect Page links in rounds, cheapest first (free map data, web search,
  * business websites, name lookups, area searches; see rounds.ts) -> read Pages
@@ -271,10 +307,33 @@ export async function runBusinessSearch(
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((entry) => entry.lead);
+
+  // Businesses on the map with no Facebook Page still have a phone or website, so keep
+  // them too, after the Facebook ones. Skipped when the brief asks for followers, which
+  // only a Page has.
+  let mapOnly = 0;
+  if (input.includeMapOnly !== false && spec.minFollowers === 0 && collected.placesWithoutPage.length) {
+    const known = deps.existingKeys || new Set<string>();
+    const taken = new Set<string>();
+    for (const lead of leads) for (const key of buildBusinessIdentityKeys(lead.business)) taken.add(key);
+    const extra = collected.placesWithoutPage
+      .map(({ place, checked }) => buildMapOnlyLead(place, checked, spec, now))
+      .filter((entry): entry is { lead: Record<string, any>; score: number } => Boolean(entry))
+      .sort((a, b) => b.score - a.score);
+    for (const entry of extra) {
+      if (mapOnly >= limit) break;
+      const keys = Array.from(buildBusinessIdentityKeys(entry.lead.business));
+      if (keys.some((key) => known.has(key) || taken.has(key))) continue;
+      keys.forEach((key) => taken.add(key));
+      leads.push(entry.lead);
+      mapOnly++;
+    }
+    if (mapOnly) input.onProgress?.(`Also kept ${mapOnly} businesses from the map with no Facebook Page, with their phone or website.`);
+  }
   const saved = deps.persist && leads.length > 0 ? deps.persist(leads) : undefined;
   if (collected.area) input.onProgress?.(describeCoverage(collected.coverage));
   input.onProgress?.(
-    `Done: ${leads.length} businesses (${qualified} qualified, ${maybe} to review), ${rejected.length} rejected.`,
+    `Done: ${leads.length - mapOnly} businesses on Facebook (${qualified} qualified, ${maybe} to review), ${rejected.length} rejected${mapOnly ? `, plus ${mapOnly} without a Facebook Page` : ""}.`,
   );
 
   return {
@@ -292,6 +351,7 @@ export async function runBusinessSearch(
       qualified,
       maybe,
       rejected: rejected.length,
+      mapOnly,
       saved,
       searchErrors: collected.stats.searchErrors,
       durationMs: Date.now() - started,
