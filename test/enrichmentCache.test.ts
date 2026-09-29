@@ -11,8 +11,8 @@ const { enrichLeadProfile } = await import('../server/leadSearch/profileEnrichme
 describe('enrichment cache', () => {
   it('initializes a versioned database schema', () => {
     const version = db.getLeadsDb().prepare('PRAGMA user_version').get() as { user_version: number };
-    // Bumped to 23 by schema v23 (lead_outcomes binary feedback table).
-    assert.equal(version.user_version, 23);
+    // Bumped to 24 by schema v24 (lead kind and source for business leads).
+    assert.equal(version.user_version, 24);
     const companiesTable = db.getLeadsDb().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'discovered_companies'").get();
     assert.ok(companiesTable);
     const emailCache = db.getLeadsDb().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_discovery_cache'").get();

@@ -167,15 +167,55 @@ export interface QualifiedLeadProfile extends LinkedInProfile {
 
 export const LEAD_STAGES = ['SCRAPED', 'ENRICHED', 'SEQUENCE ACTIVE', 'REPLIED', 'MEETING BOOKED', 'NEGOTIATING', 'CONVERTED', 'LOST', 'NURTURE'] as const;
 export const REVIEW_STATUSES = ['UNREVIEWED', 'KEEP', 'MAYBE', 'REJECT'] as const;
-export const NEXT_ACTIONS = ['NONE', 'OPEN_LINKEDIN', 'RESEARCH', 'CONNECT', 'MESSAGE'] as const;
+export const NEXT_ACTIONS = ['NONE', 'OPEN_LINKEDIN', 'OPEN_FACEBOOK', 'RESEARCH', 'CONNECT', 'MESSAGE', 'CALL', 'EMAIL'] as const;
+/** A lead is either a person (LinkedIn-first discovery) or a business (for example a Facebook Page). */
+export const LEAD_KINDS = ['person', 'business'] as const;
+/** Where a lead came from. Derived by getLeadSource() when not stored explicitly. */
+export const LEAD_SOURCES = ['linkedin', 'facebook', 'import', 'manual', 'other'] as const;
 
 export type LeadStage = typeof LEAD_STAGES[number];
 export type ReviewStatus = typeof REVIEW_STATUSES[number];
 export type NextAction = typeof NEXT_ACTIONS[number];
+export type LeadKind = typeof LEAD_KINDS[number];
+export type LeadSource = typeof LEAD_SOURCES[number];
 
 export const LEAD_STAGE_SET = new Set<string>(LEAD_STAGES);
 export const REVIEW_STATUS_SET = new Set<string>(REVIEW_STATUSES);
 export const NEXT_ACTION_SET = new Set<string>(NEXT_ACTIONS);
+export const LEAD_KIND_SET = new Set<string>(LEAD_KINDS);
+export const LEAD_SOURCE_SET = new Set<string>(LEAD_SOURCES);
+
+/**
+ * Structured facts about a business lead, read from a public source such as a
+ * Facebook Page. Contact fields come from the source record, never from an LLM.
+ */
+export interface BusinessDetails {
+  name: string;
+  pageUrl?: string;
+  pageId?: string;
+  username?: string;
+  category?: string;
+  categories?: string[];
+  about?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  phones?: string[];
+  emails?: string[];
+  websites?: string[];
+  followers?: number;
+  rating?: number;
+  ratingCount?: number;
+  verified?: boolean;
+  ownerName?: string;
+  ownerSource?: 'page' | 'website' | 'linkedin' | 'manual';
+  /** 0-1 confidence that ownerName is the owner. */
+  ownerConfidence?: number;
+  /** ISO time the source record was read. */
+  fetchedAt?: string;
+  /** 'partial' when the structured read failed and only search data is available. */
+  dataQuality?: 'full' | 'partial';
+}
 
 export interface Lead {
   id: string;
@@ -190,6 +230,12 @@ export interface Lead {
   tags?: string[];
   reviewStatus?: ReviewStatus;
   nextAction?: NextAction;
+  /** Defaults to 'person' when absent. */
+  kind?: LeadKind;
+  source?: LeadSource;
+  business?: BusinessDetails;
+  /** Set when the contact has opted out; outreach should skip this lead. */
+  doNotContact?: boolean;
   
   // Analytics & Scoring from System Prompt
   icpScoreReasoning?: string; // 1-10 rating rationale

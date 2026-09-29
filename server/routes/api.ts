@@ -4,6 +4,8 @@ import {
   LEAD_STAGE_SET as leadStages,
   REVIEW_STATUS_SET as reviewStatuses,
   NEXT_ACTION_SET as nextActions,
+  LEAD_KIND_SET as leadKinds,
+  LEAD_SOURCE_SET as leadSources,
 } from "../../src/types.js";
 import {
   readLeadsSummary,
@@ -151,7 +153,15 @@ const isPersistableLead = (lead: unknown): lead is Record<string, any> => {
     leadStages.has(value.stage) &&
     (value.reviewStatus === undefined ||
       reviewStatuses.has(value.reviewStatus)) &&
-    (value.nextAction === undefined || nextActions.has(value.nextAction)),
+    (value.nextAction === undefined || nextActions.has(value.nextAction)) &&
+    (value.kind === undefined || leadKinds.has(value.kind)) &&
+    (value.source === undefined || leadSources.has(value.source)) &&
+    (value.business === undefined ||
+      (Boolean(value.business) &&
+        typeof value.business === "object" &&
+        !Array.isArray(value.business) &&
+        typeof value.business.name === "string" &&
+        value.business.name.trim().length > 0)),
   );
 };
 
@@ -181,6 +191,8 @@ router.get("/leads", (req, res): any => {
       stage,
       reviewStatus,
       nextAction,
+      kind,
+      source,
       search,
       limit,
       offset,
@@ -198,6 +210,8 @@ router.get("/leads", (req, res): any => {
       !stage &&
       !reviewStatus &&
       !nextAction &&
+      !kind &&
+      !source &&
       !search &&
       !isSummary &&
       parsedLimit === undefined &&
@@ -224,6 +238,8 @@ router.get("/leads", (req, res): any => {
       stage,
       reviewStatus,
       nextAction,
+      kind,
+      source,
       search,
       limit: parsedLimit,
       offset: parsedOffset,

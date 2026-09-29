@@ -14,9 +14,11 @@ import {
   NEXT_ACTION_SET as NEXT_ACTIONS,
 } from "../src/types.js";
 import {
+  buildBusinessIdentityKeys,
   canonicalLinkedInIdentity,
   normalizeDedupeValue,
 } from "../src/utils/leadDedupe.js";
+import { getLeadKind, getLeadSource } from "../src/utils/leadSource.js";
 
 // Captured BEFORE dotenv.config() so an explicitly-provided path (shell, CI, or a test
 // spawning a child process) can be distinguished from one that merely came from `.env`.
@@ -28,7 +30,7 @@ if (!process.env.NODE_TEST_CONTEXT) {
 }
 
 const DEFAULT_DATA_DIR = path.join(process.cwd(), ".apex-data");
-const LATEST_SCHEMA_VERSION = 23;
+const LATEST_SCHEMA_VERSION = 24;
 
 /**
  * Test isolation. `node --test` (and `tsx --test`) sets NODE_TEST_CONTEXT in each test
@@ -132,6 +134,7 @@ function normalizeStoredLead(lead: Record<string, any>) {
   if (
     !hasLegacyEmail &&
     !hasLegacyContactStatus &&
+    !lead.business &&
     REVIEW_STATUSES.has(lead.reviewStatus) &&
     NEXT_ACTIONS.has(lead.nextAction)
   ) {
@@ -163,7 +166,82 @@ function normalizeStoredLead(lead: Record<string, any>) {
     nextAction: NEXT_ACTIONS.has(lead.nextAction) ? lead.nextAction : "NONE",
   };
   delete normalized.emailDiscovery;
+  const business = normalizeBusinessDetails(lead.business);
+  if (business) {
+    normalized.business = business;
+    normalized.kind = "business";
+  } else {
+    delete normalized.business;
+  }
   return normalized;
+}
+
+const cleanText = (value: unknown, max = 500): string | undefined =>
+  typeof value === "string" && value.trim()
+    ? value.trim().slice(0, max)
+    : undefined;
+
+const cleanTextList = (value: unknown, maxItems = 10, maxLength = 300): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = Array.from(
+    new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim().slice(0, maxLength))
+        .filter(Boolean),
+    ),
+  ).slice(0, maxItems);
+  return items.length > 0 ? items : undefined;
+};
+
+const cleanNumber = (value: unknown, min: number, max: number): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
+    ? value
+    : undefined;
+
+const BUSINESS_OWNER_SOURCES = new Set(["page", "website", "linkedin", "manual"]);
+
+/**
+ * Keeps only well-typed business fields so a malformed client or scraper payload can
+ * never store junk (wrong types, unbounded strings) in the lead record.
+ */
+export function normalizeBusinessDetails(raw: unknown): Record<string, any> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, any>;
+  const name = cleanText(record.name, 200);
+  if (!name) return undefined;
+  const business: Record<string, any> = {
+    name,
+    pageUrl: cleanText(record.pageUrl, 500),
+    pageId: typeof record.pageId === "string" && /^\d{5,25}$/.test(record.pageId) ? record.pageId : undefined,
+    username: typeof record.username === "string" && /^[a-z0-9.]{3,80}$/i.test(record.username)
+      ? record.username.toLowerCase()
+      : undefined,
+    category: cleanText(record.category, 120),
+    categories: cleanTextList(record.categories, 10, 120),
+    about: cleanText(record.about, 2000),
+    address: cleanText(record.address, 300),
+    city: cleanText(record.city, 120),
+    country: cleanText(record.country, 120),
+    phones: cleanTextList(record.phones, 10, 40),
+    emails: cleanTextList(record.emails, 10, 200)?.map((email) => email.toLowerCase()),
+    websites: cleanTextList(record.websites, 10, 500),
+    followers: cleanNumber(record.followers, 0, 1e10),
+    rating: cleanNumber(record.rating, 0, 5),
+    ratingCount: cleanNumber(record.ratingCount, 0, 1e9),
+    verified: typeof record.verified === "boolean" ? record.verified : undefined,
+    ownerName: cleanText(record.ownerName, 200),
+    ownerSource: BUSINESS_OWNER_SOURCES.has(record.ownerSource) ? record.ownerSource : undefined,
+    ownerConfidence: cleanNumber(record.ownerConfidence, 0, 1),
+    fetchedAt: cleanText(record.fetchedAt, 40),
+    dataQuality: record.dataQuality === "full" || record.dataQuality === "partial"
+      ? record.dataQuality
+      : undefined,
+  };
+  for (const key of Object.keys(business)) {
+    if (business[key] === undefined) delete business[key];
+  }
+  return business;
 }
 
 export function extractPromotedLeadColumns(storedLead: Record<string, any>) {
@@ -235,6 +313,8 @@ export function extractPromotedLeadColumns(storedLead: Record<string, any>) {
     nextAction,
     score,
     email,
+    kind: getLeadKind(storedLead),
+    source: getLeadSource(storedLead),
   };
 }
 
@@ -1236,6 +1316,38 @@ function runMigrations(db: DatabaseSync) {
       `);
     }
 
+    // v24: business leads (Facebook Pages and similar). `kind` separates people from
+    // businesses and `source` records where a lead came from, both promoted from the
+    // JSON payload so the Prospects source filter is an indexed query.
+    if (currentVersion < 24) {
+      addColumnIfMissing(
+        db,
+        "leads",
+        "kind",
+        "kind TEXT NOT NULL DEFAULT 'person'",
+      );
+      addColumnIfMissing(db, "leads", "source", "source TEXT");
+      const rows = db.prepare("SELECT id, payload FROM leads").all() as {
+        id: string;
+        payload: string;
+      }[];
+      const updateKindSource = db.prepare(
+        "UPDATE leads SET kind = ?, source = ? WHERE id = ?",
+      );
+      batchedBackfill(db, rows, (row) => {
+        try {
+          const lead = JSON.parse(row.payload);
+          updateKindSource.run(getLeadKind(lead), getLeadSource(lead), row.id);
+        } catch (error) {
+          console.warn(`Skipping kind/source backfill for lead ${row.id}:`, error);
+        }
+      });
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_leads_kind ON leads(kind);
+        CREATE INDEX IF NOT EXISTS idx_leads_source ON leads(source);
+      `);
+    }
+
     db.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1410,7 +1522,9 @@ export function getLeadsDb() {
         review_status TEXT NOT NULL DEFAULT 'UNREVIEWED',
         next_action TEXT NOT NULL DEFAULT 'NONE',
         score REAL,
-        email TEXT
+        email TEXT,
+        kind TEXT NOT NULL DEFAULT 'person',
+        source TEXT
       );
 
       CREATE TABLE IF NOT EXISTS app_meta (
@@ -1605,6 +1719,8 @@ export type ReadLeadsOptions = {
   stage?: string;
   reviewStatus?: string;
   nextAction?: string;
+  kind?: string;
+  source?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -1622,6 +1738,8 @@ export type LeadSummary = {
   nextAction: string;
   score: number | null;
   email: string | null;
+  kind: string;
+  source?: string;
   revision: number;
   createdAt?: string;
   updatedAt: string;
@@ -1636,6 +1754,8 @@ export function readLeadsSummary(options: ReadLeadsOptions = {}): {
     stage,
     reviewStatus,
     nextAction,
+    kind,
+    source,
     search,
     limit,
     offset,
@@ -1656,6 +1776,14 @@ export function readLeadsSummary(options: ReadLeadsOptions = {}): {
   if (nextAction && nextAction !== "All") {
     conditions.push("leads.next_action = ?");
     params.push(nextAction);
+  }
+  if (kind && kind !== "All") {
+    conditions.push("leads.kind = ?");
+    params.push(kind);
+  }
+  if (source && source !== "All") {
+    conditions.push("leads.source = ?");
+    params.push(source);
   }
 
   let fromClause = "FROM leads";
@@ -1686,7 +1814,7 @@ export function readLeadsSummary(options: ReadLeadsOptions = {}): {
   }
 
   const selectCols = summaryOnly
-    ? "leads.id, leads.full_name, leads.company, leads.title, leads.stage, leads.review_status, leads.next_action, leads.score, leads.email, leads.revision, leads.created_at, leads.updated_at"
+    ? "leads.id, leads.full_name, leads.company, leads.title, leads.stage, leads.review_status, leads.next_action, leads.score, leads.email, leads.kind, leads.source, leads.revision, leads.created_at, leads.updated_at"
     : "leads.payload, leads.revision";
 
   let query = `SELECT ${selectCols} ${fromClause} ${where} ORDER BY ${orderClause}`;
@@ -1724,6 +1852,8 @@ export function readLeadsSummary(options: ReadLeadsOptions = {}): {
         nextAction: r.next_action,
         score: r.score,
         email: r.email,
+        kind: r.kind || "person",
+        source: r.source || undefined,
         revision: Number(r.revision || 1),
         createdAt: r.created_at,
         updatedAt: r.updated_at,
@@ -1965,9 +2095,10 @@ export function replaceStoredLeads(leads: Record<string, any>[]) {
   const insertLead = db.prepare(`
     INSERT INTO leads (
       id, payload, created_at, updated_at, revision,
-      full_name, company, title, stage, review_status, next_action, score, email
+      full_name, company, title, stage, review_status, next_action, score, email,
+      kind, source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   db.exec("BEGIN IMMEDIATE");
@@ -2013,6 +2144,8 @@ export function replaceStoredLeads(leads: Record<string, any>[]) {
         cols.nextAction,
         cols.score,
         cols.email,
+        cols.kind,
+        cols.source,
       );
       const identityKeys = buildLeadIdentityKeys(storedLead);
       for (const identityKey of identityKeys) {
@@ -2106,6 +2239,9 @@ export function buildLeadIdentityKeys(lead: Record<string, any>): Set<string> {
   );
   if (name && company) {
     keys.add(`name_company:${name}::${company}`);
+  }
+  if (getLeadKind(lead) === "business") {
+    for (const key of buildBusinessIdentityKeys(lead?.business)) keys.add(key);
   }
   return keys;
 }
@@ -2226,9 +2362,10 @@ export function upsertLeadInExistingTransaction(
     `
     INSERT INTO leads (
       id, payload, created_at, updated_at, revision,
-      full_name, company, title, stage, review_status, next_action, score, email
+      full_name, company, title, stage, review_status, next_action, score, email,
+      kind, source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       payload = excluded.payload,
       updated_at = excluded.updated_at,
@@ -2240,7 +2377,9 @@ export function upsertLeadInExistingTransaction(
       review_status = excluded.review_status,
       next_action = excluded.next_action,
       score = excluded.score,
-      email = excluded.email
+      email = excluded.email,
+      kind = excluded.kind,
+      source = excluded.source
   `,
   ).run(
     storedLead.id,
@@ -2256,6 +2395,8 @@ export function upsertLeadInExistingTransaction(
     cols.nextAction,
     cols.score,
     cols.email,
+    cols.kind,
+    cols.source,
   );
 
   const storedKeys = Array.from(buildLeadIdentityKeys(storedLead));

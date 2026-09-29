@@ -10,9 +10,12 @@ export const REVIEW_STATUS_OPTIONS: { value: ReviewStatus; label: string }[] = [
 export const NEXT_ACTION_OPTIONS: { value: NextAction; label: string }[] = [
   { value: 'NONE', label: 'No action' },
   { value: 'OPEN_LINKEDIN', label: 'Open LinkedIn' },
+  { value: 'OPEN_FACEBOOK', label: 'Open Facebook Page' },
   { value: 'RESEARCH', label: 'Research' },
   { value: 'CONNECT', label: 'Connect' },
   { value: 'MESSAGE', label: 'Message' },
+  { value: 'CALL', label: 'Call' },
+  { value: 'EMAIL', label: 'Email' },
 ];
 
 export const getReviewStatus = (lead: Lead): ReviewStatus => lead.reviewStatus || 'UNREVIEWED';

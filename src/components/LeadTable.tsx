@@ -7,6 +7,7 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import { useToast } from '../context/ToastContext';
 import { useLeads } from '../context/LeadContext';
 import { buildProfileDedupeKeys } from '../utils/leadDedupe';
+import { getLeadKind, getLeadSource, LEAD_SOURCE_LABELS } from '../utils/leadSource';
 import { createCsvFieldReader, CSV_FIELD_ALIASES } from '../utils/csvFieldMapping';
 import Papa from 'papaparse';
 import { 
@@ -36,7 +37,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Lead, NextAction, ReviewStatus } from '../types';
+import { LEAD_SOURCES, Lead, LeadSource, NextAction, ReviewStatus } from '../types';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -101,6 +102,17 @@ const LeadTableRow = React.memo(
     const linkedInSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
       [lead.profile.fullName, lead.profile.currentCompany].filter(Boolean).join(' '),
     )}`;
+    const isBusiness = getLeadKind(lead) === 'business';
+    const business = isBusiness ? lead.business : undefined;
+    const leadSource = getLeadSource(lead);
+    const facebookPageUrl = business?.pageUrl;
+    const businessContactLine = business
+      ? [
+          business.phones?.[0],
+          typeof business.followers === 'number' ? `${business.followers.toLocaleString()} followers` : '',
+          typeof business.rating === 'number' ? `${business.rating.toFixed(1)} rating` : '',
+        ].filter(Boolean).join(' - ')
+      : '';
 
     return (
       <TableRow
@@ -146,17 +158,42 @@ const LeadTableRow = React.memo(
               <span className="sr-only">AI enriched</span>
             </div>
           )}
-          <a
-            href={linkedInProfileUrl || linkedInSearchUrl}
-            target="_blank"
-            rel="noreferrer"
-            title={linkedInProfileUrl ? 'Open LinkedIn profile' : 'Find this person on LinkedIn'}
-            aria-label={linkedInProfileUrl ? `Open ${lead.profile.fullName}'s LinkedIn profile` : `Find ${lead.profile.fullName} on LinkedIn`}
-            className="rounded-sm text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
+          {isBusiness ? (
+            facebookPageUrl && (
+              <a
+                href={facebookPageUrl}
+                target="_blank"
+                rel="noreferrer"
+                title="Open Facebook Page"
+                aria-label={`Open ${lead.profile.fullName}'s Facebook Page`}
+                className="rounded-sm text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+              </a>
+            )
+          ) : (
+            <a
+              href={linkedInProfileUrl || linkedInSearchUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={linkedInProfileUrl ? 'Open LinkedIn profile' : 'Find this person on LinkedIn'}
+              aria-label={linkedInProfileUrl ? `Open ${lead.profile.fullName}'s LinkedIn profile` : `Find ${lead.profile.fullName} on LinkedIn`}
+              className="rounded-sm text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          )}
+          {leadSource === 'facebook' && (
+            <Badge variant="outline" className="h-5 px-1.5 text-xs font-medium text-sky-300 border-sky-500/30">
+              {LEAD_SOURCE_LABELS.facebook}
+            </Badge>
+          )}
         </div>
+        {business?.ownerName && (
+          <div className="mt-1 truncate text-xs text-slate-400" title={`Owner name from ${business.ownerSource || 'unknown source'}`}>
+            Owner: {business.ownerName}
+          </div>
+        )}
         {provenance.matchedCriteria.length > 0 && (
           <div
             className="mt-1 flex flex-wrap gap-1"
@@ -204,11 +241,16 @@ const LeadTableRow = React.memo(
           </div>
         )}
       </TableCell>
-      <TableCell className="max-w-[200px] truncate text-muted-foreground" title={lead.profile.currentTitle}>
-        {lead.profile.currentTitle || 'Professional'}
+      <TableCell className="max-w-[200px] truncate text-muted-foreground" title={business?.category || lead.profile.currentTitle}>
+        {isBusiness ? business?.category || 'Business' : lead.profile.currentTitle || 'Professional'}
       </TableCell>
       <TableCell className="max-w-[190px] text-muted-foreground">
         <div className="truncate">{lead.profile.currentCompany || 'Independent'}</div>
+        {businessContactLine && (
+          <div className="mt-1 truncate text-xs text-slate-400" title={businessContactLine}>
+            {businessContactLine}
+          </div>
+        )}
         {(provenance.location || provenance.industry) && (
           <div className="mt-1 truncate text-xs text-slate-500">
             {[provenance.location, provenance.industry].filter(Boolean).join(' - ')}
@@ -396,6 +438,7 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
   const [nextActionFilter, setNextActionFilter] = useState<NextAction | 'All'>('All');
   const [locationFilter, setLocationFilter] = useState('All');
   const [industryFilter, setIndustryFilter] = useState('All');
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | 'All'>('All');
   const [currentPage, setCurrentPage] = useState(1);
   const [detailsLeadId, setDetailsLeadId] = useState<string | null>(null);
   const handleOpenDetails = useCallback((selectedLead: Lead) => {
@@ -526,6 +569,9 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
           lead.profile?.currentCompany,
           provenance.location,
           provenance.industry,
+          lead.business?.category,
+          lead.business?.city,
+          lead.business?.ownerName,
           provenance.discoveryQuery,
           ...provenance.matchedCriteria,
           ...provenance.uncertainties,
@@ -545,10 +591,11 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
         && (nextActionFilter === 'All' || getNextAction(lead) === nextActionFilter)
         && (locationFilter === 'All' || lead.profile?.location === locationFilter)
         && (industryFilter === 'All' || lead.profile?.industry === industryFilter)
+        && (sourceFilter === 'All' || getLeadSource(lead) === sourceFilter)
         && (!deferredSearch || searchText.includes(deferredSearch))
       ))
       .map(({ lead }) => lead),
-    [deferredSearch, industryFilter, locationFilter, nextActionFilter, reviewFilter, searchableLeads, stageFilter],
+    [deferredSearch, industryFilter, locationFilter, nextActionFilter, reviewFilter, searchableLeads, sourceFilter, stageFilter],
   );
 
   // Consolidated single-pass duplicate analysis on all leads using authoritative dedupe keys
@@ -718,7 +765,7 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [industryFilter, locationFilter, nextActionFilter, normalizedSearch, reviewFilter, stageFilter]);
+  }, [industryFilter, locationFilter, nextActionFilter, normalizedSearch, reviewFilter, sourceFilter, stageFilter]);
 
   React.useEffect(() => {
     setCurrentPage(prev => Math.min(prev, totalPages));
@@ -981,7 +1028,14 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
       'Matched Criteria',
       'Uncertainties',
       'Log Internal Notes',
-      'Created Date'
+      'Created Date',
+      'Source',
+      'Lead Type',
+      'Facebook Page URL',
+      'Business Category',
+      'Website',
+      'Followers',
+      'Owner Name'
     ];
 
     // Map each lead into a clean row array
@@ -1019,7 +1073,14 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
         provenance.matchedCriteria.join('; '),
         provenance.uncertainties.join('; '),
         lead.notes || '',
-        new Date(lead.createdAt).toLocaleDateString()
+        new Date(lead.createdAt).toLocaleDateString(),
+        LEAD_SOURCE_LABELS[getLeadSource(lead)],
+        getLeadKind(lead),
+        lead.business?.pageUrl || '',
+        lead.business?.category || '',
+        lead.business?.websites?.[0] || lead.profile.contactDetails?.website || '',
+        typeof lead.business?.followers === 'number' ? String(lead.business.followers) : '',
+        lead.business?.ownerName || ''
       ];
 
       // Escape quotes and double quotes for clean CSV syntax
@@ -1541,6 +1602,11 @@ export default function LeadTable({ onAddManualLead }: { onAddManualLead: () => 
           <select id="industry-filter" value={industryFilter} onChange={(event) => setIndustryFilter(event.target.value)} className="max-w-44 rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-medium text-slate-300 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
             <option value="All">All industries</option>
             {industryOptions.map(industry => <option key={industry} value={industry}>{industry}</option>)}
+          </select>
+          <label htmlFor="source-filter" className="sr-only">Filter by source</label>
+          <select id="source-filter" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as LeadSource | 'All')} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-medium text-slate-300 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+            <option value="All">All sources</option>
+            {LEAD_SOURCES.map(source => <option key={source} value={source}>{LEAD_SOURCE_LABELS[source]}</option>)}
           </select>
         </div>
       </div>
