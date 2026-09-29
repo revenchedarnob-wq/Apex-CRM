@@ -45,9 +45,14 @@ export type BusinessSearchResult = {
   };
 };
 
-/** Business name from a search result title such as "Sweet Crumbs - Home | Facebook". */
+/**
+ * Business name from a search result title such as "Sweet Crumbs - Home | Facebook" or
+ * "Sweet Crumbs | Manchester | Facebook" (Facebook puts the city between name and suffix).
+ */
 export function nameFromSearchTitle(title: string): string {
-  return title
+  const segments = title.split(/\s+\|\s+/);
+  const withCity = segments.length >= 3 && /^facebook$/i.test(segments[segments.length - 1].trim());
+  return (withCity ? segments[0] : title)
     .replace(/\s*[|\-–]\s*Facebook\s*$/i, "")
     .replace(/\s*[|\-–]\s*(?:Home|About|Posts|Photos|Reviews)\s*$/i, "")
     .replace(/\s*\|\s*Facebook.*$/i, "")

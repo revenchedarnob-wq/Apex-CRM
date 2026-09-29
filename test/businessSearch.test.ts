@@ -66,6 +66,8 @@ describe('page filtering', () => {
 
   test('cleans names from search titles', () => {
     assert.equal(nameFromSearchTitle('Sweet Crumbs - Home | Facebook'), 'Sweet Crumbs');
+    assert.equal(nameFromSearchTitle('La Chouquette - Artisan Bakery | Manchester | Facebook'), 'La Chouquette - Artisan Bakery');
+    assert.equal(nameFromSearchTitle('The Teapot Bakery Manchester | Facebook'), 'The Teapot Bakery Manchester');
   });
 });
 
