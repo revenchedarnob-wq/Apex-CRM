@@ -38,7 +38,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
-async function importLLM(suffix: string) {
+async function importLLM(suffix: string): Promise<typeof import('../server/services/llm.ts')> {
   return import(`../server/services/llm.ts?t=${Date.now()}-${suffix}`);
 }
 
