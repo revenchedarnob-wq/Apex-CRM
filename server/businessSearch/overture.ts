@@ -268,6 +268,7 @@ export function createOvertureAreaSource(options: {
   return {
     async load(spec, { signal, onProgress }) {
       const { name, country } = splitPlaceAndCountry(spec.place);
+      if (!name && country) onProgress?.("Map data covers a town or city, not a whole country, so only web search is used. Name a city for better coverage.");
       if (!name || tradePhrases(spec).length === 0) return null;
       const cacheKey = areaCacheKey(spec);
       const cached = options.cache?.get(cacheKey);

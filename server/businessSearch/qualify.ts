@@ -1,6 +1,6 @@
 import type { BusinessDetails } from "../../src/types.js";
 import { singularize, type BusinessSearchSpec } from "./brief.js";
-import { tradePhrases } from "./places.js";
+import { addressCountry, splitPlaceAndCountry, tradePhrases } from "./places.js";
 
 export type CheckResult = "pass" | "fail" | "unsure";
 
@@ -60,7 +60,20 @@ export function qualifyBusiness(business: BusinessDetails, spec: BusinessSearchS
   }
 
   let place: CheckResult = "pass";
-  if (spec.place) {
+  const wanted = splitPlaceAndCountry(spec.place);
+  if (spec.place && !wanted.name && wanted.country) {
+    // A whole country: any address in it counts, "Los Angeles, CA 90023" is in the US.
+    const country = addressCountry(business.address);
+    if (country === wanted.country) {
+      reasons.push(`Located in ${spec.place}`);
+    } else if (country) {
+      place = "fail";
+      reasons.push(`Address is outside ${spec.place}: ${business.address}`);
+    } else {
+      place = "unsure";
+      reasons.push(business.address ? `Country not clear from the address: ${business.address}` : "No address listed");
+    }
+  } else if (spec.place) {
     const tokens = placeTokens(spec.place);
     const locationText = [business.address, business.city].filter(Boolean).join(" ");
     const locationWords = new Set(words(locationText));

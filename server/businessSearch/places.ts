@@ -118,6 +118,9 @@ const US_STATES = new Set([
 export function splitPlaceAndCountry(place: string): { name: string; country?: string } {
   const parts = String(place || "").split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0) return { name: "" };
+  // A whole country ("usa", "UK") has no town part.
+  const whole = COUNTRY_ALIASES[parts.join(", ").toLowerCase()];
+  if (whole) return { name: "", country: whole };
   if (parts.length > 1) {
     const last = parts[parts.length - 1];
     const alias = COUNTRY_ALIASES[last.toLowerCase()];

@@ -25,6 +25,7 @@ import {
   type AreaPlace,
 } from '../server/businessSearch/places.ts';
 import { runBusinessSearch } from '../server/businessSearch/pipeline.ts';
+import { qualifyBusiness } from '../server/businessSearch/qualify.ts';
 import { collectCandidates } from '../server/businessSearch/rounds.ts';
 import { facebookPagesInHtml, findFacebookOnWebsite } from '../server/businessSearch/websiteLinks.ts';
 
@@ -409,5 +410,27 @@ describe('businesses with no Facebook Page', () => {
   test('are left out when the brief asks for followers', async () => {
     const result = await runBusinessSearch({ query: 'bakeries in Manchester, UK with 500+ followers', limit: 5 }, deps());
     assert.equal(result.stats.mapOnly, 0);
+  });
+});
+
+describe('a whole country as the place', () => {
+  test('is read as a country with no town', () => {
+    assert.deepEqual(splitPlaceAndCountry('usa'), { name: '', country: 'US' });
+    assert.deepEqual(splitPlaceAndCountry('United Kingdom'), { name: '', country: 'GB' });
+  });
+
+  test('keeps businesses anywhere in that country (live "clothing brand in usa" search)', () => {
+    const usa = parseBusinessBrief('find 10 clothing brand in usa');
+    const inLa = qualifyBusiness({ name: 'Reformation', category: 'Clothing (Brand)', address: '2230 E 7th St, Los Angeles, CA 90023', websites: ['https://thereformation.com'] }, usa);
+    assert.equal(inLa.verdict, 'qualified');
+    const inLondon = qualifyBusiness({ name: 'Other', category: 'Clothing (Brand)', address: '1 High St, London, SW1A 1AA', websites: ['https://other.co.uk'] }, usa);
+    assert.equal(inLondon.checks.place, 'fail');
+  });
+
+  test('skips map data and says why', async () => {
+    const messages: string[] = [];
+    const source = createOvertureAreaSource({ getRunner: async () => { throw new Error('should not run'); }, fetchImpl: async () => new Response('') });
+    assert.equal(await source.load(parseBusinessBrief('clothing brands in usa'), { onProgress: (m) => messages.push(m) }), null);
+    assert.match(messages[0], /not a whole country/);
   });
 });

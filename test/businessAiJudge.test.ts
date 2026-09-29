@@ -13,7 +13,7 @@ const stub = (answers: unknown[] | ((stage: string, prompt: string) => unknown))
     const answer = typeof answers === 'function' ? answers(options.stage, prompt) : answers.shift();
     if (answer instanceof Error) throw answer;
     return answer;
-  }) as AiCall & { calls: string[] };
+  }) as unknown as AiCall & { calls: string[] };
   fn.calls = calls;
   return fn;
 };
