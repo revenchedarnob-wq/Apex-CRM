@@ -355,10 +355,11 @@ test("Component 4: scheduleAdaptiveSearchTasks activates when tasks.length >= ma
 test("Component 2: judgeStage dynamicMaxTokens evaluates properly for micro-batches", async () => {
   const { computeJudgeDynamicMaxTokens } = await import("../server/leadSearch/stages/judgeStage.js");
 
-  assert.equal(computeJudgeDynamicMaxTokens(1), 500); // 1-candidate batch receives 500 tokens
-  assert.equal(computeJudgeDynamicMaxTokens(2), 700); // 2-candidate batch receives 700 tokens (eliminating JSON syntax truncation)
-  assert.equal(computeJudgeDynamicMaxTokens(3), 950); // 3-candidate batch capped at 950 (preventing Groq 429)
-  assert.equal(computeJudgeDynamicMaxTokens(4), 950);
+  assert.equal(computeJudgeDynamicMaxTokens(1), 500); // 500-token floor for single-candidate batches
+  assert.equal(computeJudgeDynamicMaxTokens(2), 800); // 400 tokens per candidate
+  assert.equal(computeJudgeDynamicMaxTokens(3), 1200);
+  // Token-weight micro-batching packs up to 10 candidates, so the budget is uncapped
+  assert.equal(computeJudgeDynamicMaxTokens(10), 4000);
 });
 
 

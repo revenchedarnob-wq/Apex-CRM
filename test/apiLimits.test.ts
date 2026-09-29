@@ -14,6 +14,8 @@ const {
   readOutreachDrafts,
   getLeadsETag,
   invalidateLeadsStatsCache,
+  upsertLeadWithIdentity,
+  readStoredLeadById,
   closeLeadsDb,
 } = await import("../server/db.ts");
 
@@ -93,5 +95,22 @@ describe("API and DB Limit Validation (Findings 3, 4, 5, 17)", () => {
     invalidateLeadsStatsCache();
     const etag2 = getLeadsETag({ stage: "all" });
     assert.equal(etag1, etag2, "ETag must be derived from durable SQLite state, not ephemeral in-memory counter");
+  });
+
+  it("getLeadsETag changes when a lead is edited within the same millisecond (Finding 17)", (t) => {
+    // Freeze the clock so both writes share one updated_at; only the revision bump can
+    // distinguish them now that the in-memory mutation counter is out of the hash.
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T00:00:00.000Z") });
+    upsertLeadWithIdentity({
+      id: "etag-lead",
+      fullName: "ETag Lead",
+      sourceUrl: "https://linkedin.com/in/etag-lead",
+      stage: "SCRAPED",
+    });
+    const before = getLeadsETag({ stage: "all" });
+    const stored = readStoredLeadById("etag-lead");
+    upsertLeadWithIdentity({ ...stored, stage: "QUALIFIED" });
+    const after = getLeadsETag({ stage: "all" });
+    assert.notEqual(before, after, "an edit must invalidate the ETag even when updated_at is unchanged");
   });
 });
