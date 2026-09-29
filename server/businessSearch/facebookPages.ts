@@ -67,6 +67,9 @@ export function mapPageRecord(record: Record<string, any>, fetchedAt = new Date(
   const info = (record.contact_and_basic_info && typeof record.contact_and_basic_info === "object")
     ? record.contact_and_basic_info
     : {};
+  // Live records (2026-09) nest contact details one level deeper, in contact_info.
+  const contact = (info.contact_info && typeof info.contact_info === "object") ? info.contact_info : {};
+  const basic = (info.basic_info && typeof info.basic_info === "object") ? info.basic_info : {};
   const name = firstString(record.page_name, record.name, record.title);
   if (!name) return null;
 
@@ -77,16 +80,17 @@ export function mapPageRecord(record: Record<string, any>, fetchedAt = new Date(
     : toNumber(record.rating);
   const ratingCount = typeof record.rating === "object" && record.rating
     ? toNumber(record.rating.count ?? record.rating.reviews ?? record.rating.total)
-    : toNumber(record.reviews_count ?? record.rating_count);
+    : toNumber(record.reviews_count ?? record.rating_count ?? basic.rating?.count);
   const categories = toStringList(record.categories ?? info.categories);
-  const phones = toStringList(record.phones ?? record.phone ?? info.phones ?? info.phone);
-  const emails = toStringList(record.emails ?? record.email ?? info.emails ?? info.email)
+  const phones = toStringList(record.phones ?? record.phone ?? info.phones ?? info.phone ?? contact.phones);
+  const emails = toStringList(record.emails ?? record.email ?? info.emails ?? info.email ?? contact.emails)
     .map((email) => email.toLowerCase())
     .filter((email) => EMAIL_PATTERN.test(email));
-  const websites = toStringList(record.websites ?? record.website ?? info.websites ?? info.website);
+  const websites = toStringList(record.websites ?? record.website ?? info.websites ?? info.website ?? contact.websites);
   const address = firstString(
     typeof record.address === "object" && record.address ? record.address.formatted ?? record.address.full : record.address,
     info.address,
+    contact.address?.formatted,
   );
 
   const business: BusinessDetails = {
@@ -96,7 +100,7 @@ export function mapPageRecord(record: Record<string, any>, fetchedAt = new Date(
     username: firstString(record.username)?.replace(/^@/, "") || page?.username,
     category: firstString(record.primary_category, record.category, categories[0]),
     categories: categories.length ? categories : undefined,
-    about: firstString(record.summary_text, record.intro, record.about, record.description),
+    about: firstString(record.summary_text, record.intro, record.about, record.description, record.details_about?.about_text),
     address,
     city: firstString(record.city, typeof record.address === "object" ? record.address?.city : undefined, record.location),
     phones: phones.length ? phones : undefined,

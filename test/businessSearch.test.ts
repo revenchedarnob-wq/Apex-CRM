@@ -72,6 +72,36 @@ describe('page filtering', () => {
 });
 
 describe('Bright Data Page records', () => {
+  test('reads contact details nested in contact_info (live record shape)', () => {
+    const live = {
+      id: '100046395859076',
+      url: 'https://www.facebook.com/companiobakery',
+      page_name: 'Companio Bakery',
+      username: 'companiobakery',
+      primary_category: 'Bakery',
+      address: { formatted: 'Manchester, United Kingdom' },
+      contact_and_basic_info: {
+        categories: ['Bakery'],
+        contact_info: {
+          address: { formatted: 'Manchester, United Kingdom' },
+          phones: [],
+          emails: ['info@companiobakery.co.uk'],
+          websites: ['http://www.companiobakery.co.uk/'],
+        },
+        basic_info: { rating: { value: 100, count: 28, text: '100% recommend (28 reviews)' } },
+      },
+      followers: 1500,
+      is_verified: false,
+      input: { url: 'https://www.facebook.com/companiobakery' },
+    };
+    const business = mapPageRecord(live)!;
+    assert.deepEqual(business.websites, ['http://www.companiobakery.co.uk/']);
+    assert.deepEqual(business.emails, ['info@companiobakery.co.uk']);
+    assert.equal(business.ratingCount, 28);
+    assert.equal(business.rating, undefined);
+    assert.equal(business.followers, 1500);
+  });
+
   test('maps a record to business details', () => {
     const business = mapPageRecord(bakeryRecord)!;
     assert.equal(business.name, 'Sweet Crumbs');
