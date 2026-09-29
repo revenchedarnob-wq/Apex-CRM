@@ -22,6 +22,8 @@ export type AreaPlace = {
   facebookPages: FacebookPageRef[];
   /** 0-1 when the source gives one. */
   confidence?: number;
+  /** Chain or brand name ("Greggs") when the source marks the place as part of one. */
+  brand?: string;
   /** "overture", or another source name. */
   source: string;
 };
@@ -47,7 +49,7 @@ export type AreaSource = {
 
 // Common ways the same trade is named, in briefs, on maps and on Facebook.
 const TRADE_SYNONYMS: Record<string, string[]> = {
-  bakery: ["bakery", "cake shop", "patisserie", "pastry shop", "bakehouse"],
+  bakery: ["bakery", "cake shop", "cupcake shop", "custom cake", "patisserie", "pastry shop", "bakehouse"],
   cafe: ["cafe", "coffee shop", "tea room"],
   restaurant: ["restaurant", "eatery", "bistro"],
   barber: ["barber", "barbershop", "barber shop"],

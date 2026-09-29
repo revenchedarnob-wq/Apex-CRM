@@ -342,3 +342,36 @@ describe('pipeline with map data', () => {
     assert.equal(result.stats.area?.name, 'Manchester, GB');
   });
 });
+
+describe('chains', () => {
+  test('leaves chain branches out when the brief asks for local businesses', async () => {
+    const chain = place({ id: 'c1', name: 'Greggs', brand: 'Greggs', facebookPages: [{ key: 'facebook:id:107111544196150', url: 'https://www.facebook.com/profile.php?id=107111544196150', pageId: '107111544196150' }] });
+    const local = place({ id: 'l1', name: 'Holy Grain', facebookPages: [{ key: 'facebook:user:holygrainsourdough', url: 'https://www.facebook.com/holygrainsourdough', username: 'holygrainsourdough' }] });
+    const areaSource = { load: async () => ({ places: [chain, local], areaName: 'Manchester, GB', fromCache: false }) };
+    const localRun = await collectCandidates(parseBusinessBrief('independent bakeries in Manchester'), { target: 5 }, { areaSource });
+    assert.deepEqual(localRun.candidates.map((c) => c.place?.name), ['Holy Grain']);
+    const anyRun = await collectCandidates(spec, { target: 5 }, { areaSource });
+    assert.equal(anyRun.candidates.length, 2);
+  });
+
+  test('keeps the brand from Overture', () => {
+    const mapped = mapOverturePlace({ id: 'g', names: { primary: 'Greggs' }, brand: { names: { primary: 'Greggs' } }, basic_category: 'bakery' });
+    assert.equal(mapped?.brand, 'Greggs');
+  });
+});
+
+test('"independent" is not read as part of the trade', () => {
+  assert.deepEqual(parseBusinessBrief('independent family-run bakeries in Manchester').categoryTerms, ['bakery']);
+});
+
+test('rebuilds a bare profile.php Page link from the record id (live record shape)', async () => {
+  const { mapPageRecord } = await import('../server/businessSearch/facebookPages.ts');
+  const mapped = mapPageRecord({ url: 'https://www.facebook.com/profile.php', page_name: 'Wong Wong Bakery', id: '100045069198459' });
+  assert.equal(mapped?.pageUrl, 'https://www.facebook.com/profile.php?id=100045069198459');
+});
+
+test('a Page in a synonym category still qualifies', async () => {
+  const { qualifyBusiness } = await import('../server/businessSearch/qualify.ts');
+  const result = qualifyBusiness({ name: 'Vanilla Ice Cakes', category: 'Cupcake Shop', address: '1 Road, Manchester', dataQuality: 'full' }, spec);
+  assert.equal(result.checks.category, 'pass');
+});

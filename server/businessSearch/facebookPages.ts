@@ -93,11 +93,17 @@ export function mapPageRecord(record: Record<string, any>, fetchedAt = new Date(
     contact.address?.formatted,
   );
 
+  // Some live records give a bare ".../profile.php" URL; rebuild it from the id or handle.
+  const username = firstString(record.username)?.replace(/^@/, "");
+  const fallbackPage = page
+    || (pageId && /^\d{5,25}$/.test(pageId) ? canonicalFacebookPage(`https://www.facebook.com/profile.php?id=${pageId}`) : null)
+    || (username ? canonicalFacebookPage(`https://www.facebook.com/${username}`) : null);
+
   const business: BusinessDetails = {
     name,
-    pageUrl: page?.url || firstString(record.url),
+    pageUrl: fallbackPage?.url || firstString(record.url),
     pageId: pageId && /^\d{5,25}$/.test(pageId) ? pageId : page?.pageId,
-    username: firstString(record.username)?.replace(/^@/, "") || page?.username,
+    username: username || page?.username,
     category: firstString(record.primary_category, record.category, categories[0]),
     categories: categories.length ? categories : undefined,
     about: firstString(record.summary_text, record.intro, record.about, record.description, record.details_about?.about_text),

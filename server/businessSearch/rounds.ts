@@ -116,7 +116,9 @@ export async function collectCandidates(
       progress(`Map data failed (${(error as Error)?.message || error}), so only web search is used.`);
     }
   }
-  const places = area?.places || [];
+  // Chain branches share one national Page; skip them when the brief asks for local businesses.
+  const localOnly = /\b(?:independent|local|small|family)\b/i.test(spec.brief);
+  const places = (area?.places || []).filter((place) => !(localOnly && place.brand));
   stats.mapPlaces = places.length;
   for (const place of places) {
     const page = place.facebookPages[0];
@@ -127,7 +129,7 @@ export async function collectCandidates(
   }
   if (area) {
     progress(
-      `Map data${area.fromCache ? " (saved copy)" : ""}: ${places.length} businesses in ${area.areaName}, ${stats.mapLinked} already link a Facebook Page.`,
+      `Map data${area.fromCache ? " (saved copy)" : ""}: ${places.length} businesses in ${area.areaName}, ${stats.mapLinked} already link a Facebook Page${localOnly ? " (chains left out)" : ""}.`,
     );
   }
 
@@ -228,7 +230,13 @@ export async function collectCandidates(
   const rank = (candidate: Candidate) => Math.min(...candidate.via.map((via) => VIA_ORDER.indexOf(via)));
   const candidates = all
     .filter((candidate) => !known.has(candidate.key))
-    .sort((a, b) => rank(a) - rank(b) || b.via.length - a.via.length)
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        Number(Boolean(a.place?.brand)) - Number(Boolean(b.place?.brand)) ||
+        b.via.length - a.via.length ||
+        (b.place?.confidence ?? 0) - (a.place?.confidence ?? 0),
+    )
     .slice(0, target);
   const coverage = area ? estimateCoverage(listKeys, searchKeys) : null;
   return { candidates, area, coverage, queries, stats };

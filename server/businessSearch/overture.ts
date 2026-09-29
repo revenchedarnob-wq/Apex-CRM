@@ -201,8 +201,10 @@ export function mapOverturePlace(raw: unknown): AreaPlace | null {
     emails: strings(record.emails).map((email) => email.toLowerCase()),
     facebookPages: facebookPagesFromLinks([...socials, ...strings(record.websites)]),
     confidence,
+    brand: typeof record.brand?.names?.primary === "string" ? record.brand.names.primary : undefined,
     source: "overture",
   };
+  if (!place.brand) delete place.brand;
   return place;
 }
 
@@ -239,7 +241,18 @@ export async function loadDuckDbQueryRunner(): Promise<QueryRunner | null> {
   }
   const instance = await duckdb.DuckDBInstance.create(":memory:");
   const connection = await instance.connect();
-  await connection.run("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';");
+  // The bucket is public. Empty keys stop DuckDB from sending AWS credentials found in
+  // the environment, which the bucket would reject.
+  for (const statement of [
+    "INSTALL httpfs",
+    "LOAD httpfs",
+    "SET s3_region='us-west-2'",
+    "SET s3_access_key_id=''",
+    "SET s3_secret_access_key=''",
+    "SET s3_session_token=''",
+  ]) {
+    await connection.run(statement);
+  }
   return async (sql: string) => {
     const reader = await connection.runAndReadAll(sql);
     return (reader.getRowObjectsJson?.() ?? reader.getRowObjects()) as Record<string, unknown>[];

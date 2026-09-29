@@ -21,6 +21,8 @@ const FILLER_WORDS = new Set([
   'local', 'small', 'business', 'businesses', 'company', 'companies', 'shop', 'shops', 'store',
   'stores', 'page', 'pages', 'facebook', 'fb', 'on', 'that', 'which', 'who', 'are', 'is',
   'with', 'and', 'or', 'of', 'to', 'please', 'owners', 'owner',
+  // Describe the kind of business, not its trade; rounds.ts uses them to leave chains out.
+  'independent', 'independently', 'family', 'family-run', 'family-owned', 'run', 'owned',
 ]);
 
 // Words that start the "extras" part of a brief: "bakeries in Leeds that do weddings".

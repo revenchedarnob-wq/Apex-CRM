@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import type { BusinessDetails } from "../../src/types.js";
 import { parseBusinessBrief, type BusinessSearchSpec } from "./brief.js";
+import { canonicalFacebookPage } from "../../src/utils/leadDedupe.js";
 import type { CoverageEstimate } from "./coverage.js";
 import { describeCoverage } from "./coverage.js";
 import type { DiscoveredPage } from "./discover.js";
@@ -231,6 +232,7 @@ export async function runBusinessSearch(
     const read = readResults.results[index];
     let business = read?.business || businessFromSearchHit(page, page.place);
     if (!business) return;
+    if (!business.pageUrl || !canonicalFacebookPage(business.pageUrl)) business = { ...business, pageUrl: page.url };
     const sourceReasons = page.via.map((via) => VIA_LABEL[via]).filter((label, i, all) => all.indexOf(label) === i);
     if (page.place) {
       // Pages found by name must prove they are the listed business; map and website links already do.

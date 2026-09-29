@@ -1,5 +1,6 @@
 import type { BusinessDetails } from "../../src/types.js";
 import { singularize, type BusinessSearchSpec } from "./brief.js";
+import { tradePhrases } from "./places.js";
 
 export type CheckResult = "pass" | "fail" | "unsure";
 
@@ -43,10 +44,14 @@ export function qualifyBusiness(business: BusinessDetails, spec: BusinessSearchS
   const descriptiveText = [business.name, business.about].filter(Boolean).join(" ");
 
   let category: CheckResult;
-  if (containsAllTerms(categoryText, spec.categoryTerms)) {
+  // Any common name for the trade counts: a "Cake Shop" Page matches a search for bakeries.
+  const phrases = tradePhrases(spec);
+  const matchesTrade = (text: string) =>
+    phrases.length === 0 ? containsAllTerms(text, spec.categoryTerms) : phrases.some((phrase) => containsAllTerms(text, [phrase]));
+  if (matchesTrade(categoryText)) {
     category = "pass";
     reasons.push(`Category: ${business.category || spec.categoryTerms.join(" ")}`);
-  } else if (containsAllTerms(descriptiveText, spec.categoryTerms)) {
+  } else if (matchesTrade(descriptiveText)) {
     category = categoryText ? "unsure" : "pass";
     reasons.push(`Name or intro mentions ${spec.categoryTerms.join(" ")}`);
   } else {
