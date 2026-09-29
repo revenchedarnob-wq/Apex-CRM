@@ -124,7 +124,7 @@ export async function collectCandidates(
     }
   }
   // Chain branches share one national Page; skip them when the brief asks for local businesses.
-  const localOnly = /\b(?:independent|local|small|family)\b/i.test(spec.brief);
+  const localOnly = spec.localOnly ?? /\b(?:independent|local|small|family)\b/i.test(spec.brief);
   const places = (area?.places || []).filter((place) => !(localOnly && place.brand));
   stats.mapPlaces = places.length;
   for (const place of places) {

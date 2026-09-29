@@ -109,6 +109,12 @@ export default function BusinessSearchPanel() {
             {result.stats.mapOnly ? ` Also kept ${result.stats.mapOnly} businesses from the map with no Facebook Page.` : ''}
             {result.stats.saved && ` ${result.stats.saved.created} new in your CRM.`}
           </p>
+          {result.stats.ai && result.stats.ai.requirements.length === 0 && result.stats.ai.judged > 0 && (
+            <p className="text-xs text-slate-400">
+              AI double-checked {result.stats.ai.judged} businesses the rules were unsure about
+              {result.stats.ai.rejected ? ` and ruled out ${result.stats.ai.rejected}` : ''}.
+            </p>
+          )}
           {result.stats.ai && result.stats.ai.requirements.length > 0 && (
             <p className="text-xs text-slate-400">
               AI checked {result.stats.ai.judged} businesses for: {result.stats.ai.requirements.join('; ')}

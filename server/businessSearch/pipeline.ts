@@ -225,7 +225,7 @@ export async function runBusinessSearch(
   deps: BusinessSearchDeps,
 ): Promise<BusinessSearchResult> {
   const started = Date.now();
-  const limit = Math.max(1, Math.min(100, Math.floor(input.limit || 25)));
+  let limit = Math.max(1, Math.min(100, Math.floor(input.limit || 25)));
   let spec = parseBusinessBrief(input.query);
   let aiError: string | undefined;
   if (deps.ai) {
@@ -243,6 +243,11 @@ export async function runBusinessSearch(
   input.onProgress?.(
     `Looking for ${spec.categoryTerms.join(" ")}${spec.place ? ` in ${spec.place}` : ""}${spec.minFollowers ? ` with ${spec.minFollowers}+ followers` : ""}.`,
   );
+  if (spec.requestedCount && spec.requestedCount !== limit) {
+    limit = spec.requestedCount;
+    input.onProgress?.(`Your request asks for ${limit}, so up to ${limit} are returned.`);
+  }
+  if (spec.synonyms?.length) input.onProgress?.(`Also searching as: ${spec.synonyms.join(", ")}.`);
   if (spec.requirements?.length) input.onProgress?.(`The AI will check: ${spec.requirements.join("; ")}.`);
 
   // Collect about 1.5x the target so rejections still leave enough results.
@@ -342,12 +347,17 @@ export async function runBusinessSearch(
     }
   }
 
-  // The AI checks the brief's own-words requirements on businesses that passed the rules.
+  // The AI checks businesses that passed the rules: the trade, the place and the brief's
+  // own-words requirements.
   const aiStats: BusinessSearchResult["stats"]["ai"] = { requirements: spec.requirements || [], judged: 0, rejected: 0, error: aiError };
   let fbKept = accepted;
   let mapKept = mapOnlyPool;
-  if (deps.ai && spec.requirements?.length && accepted.length + mapOnlyPool.length > 0) {
-    const pool = [...accepted, ...mapOnlyPool];
+  // With own-words requirements every business is checked; otherwise only the ones the
+  // rules could not settle ("to review"), so a plain search costs no judge calls.
+  const needsJudging = (entry: { lead: Record<string, any> }) =>
+    Boolean(spec.requirements?.length) || entry.lead.reviewStatus === "MAYBE";
+  const pool = deps.ai ? [...accepted, ...mapOnlyPool].filter(needsJudging) : [];
+  if (deps.ai && pool.length > 0) {
     input.onProgress?.(`The AI is checking ${pool.length} businesses against your request.`);
     const verdicts = await judgeBusinesses(
       spec,
@@ -371,8 +381,11 @@ export async function runBusinessSearch(
         return false;
       }
       entry.lead.evidenceReasons = [reason, ...(entry.lead.evidenceReasons || [])];
-      if (verdict.verdict === "match") entry.score += 1.5;
-      else {
+      if (verdict.verdict === "match") {
+        entry.score += 1.5;
+        // The AI settled what the rules could not.
+        if (entry.lead.reviewStatus === "MAYBE") entry.lead.reviewStatus = "UNREVIEWED";
+      } else {
         entry.score -= 0.5;
         entry.lead.reviewStatus = "MAYBE";
       }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { judgeBusinesses, readBriefWithAi, type AiCall } from '../server/businessSearch/aiJudge.ts';
+import { judgeBusinesses, judgeChecks, readBriefWithAi, type AiCall } from '../server/businessSearch/aiJudge.ts';
 import { parseBusinessBrief } from '../server/businessSearch/brief.ts';
 import { runBusinessSearch } from '../server/businessSearch/pipeline.ts';
 import type { AreaPlace } from '../server/businessSearch/places.ts';
@@ -55,9 +55,9 @@ describe('AI judges businesses', () => {
     assert.equal(verdicts.has('ghost'), false);
   });
 
-  test('makes no call without requirements, and survives a failed call', async () => {
+  test('makes no call without businesses, and survives a failed call', async () => {
     const none = stub([]);
-    assert.equal((await judgeBusinesses({ ...spec, requirements: [] }, [item('a')], none)).size, 0);
+    assert.equal((await judgeBusinesses(spec, [], none)).size, 0);
     assert.equal(none.calls.length, 0);
     const errors: unknown[] = [];
     const failing = stub([new Error('rate limited')]);
@@ -103,5 +103,67 @@ describe('pipeline with the AI', () => {
     assert.equal(result.leads.length, 2);
     assert.equal(result.stats.ai.judged, 0);
     assert.match(result.stats.ai.error || '', /no credits/);
+  });
+});
+
+describe('AI understanding, round two', () => {
+  test('reads the count, synonyms and local-only, and checks the count is really in the brief', async () => {
+    const rules = parseBusinessBrief('i need ten family bakeries around Leeds');
+    const spec = await readBriefWithAi(
+      rules,
+      stub([{ trade: 'bakery', synonyms: ['cake shop', 'Leeds bakery', 'bakery'], place: 'Leeds', quantity: 10, localOnly: true, requirements: [] }]),
+    );
+    assert.deepEqual(spec.synonyms, ['cake shop']);
+    assert.equal(spec.requestedCount, undefined, '"ten" as a word is not trusted as a number');
+    assert.equal(spec.localOnly, true);
+    const withDigits = await readBriefWithAi(
+      parseBusinessBrief('please get me about 15 salons in Leeds'),
+      stub([{ trade: 'hair salon', synonyms: [], place: 'Leeds', quantity: 15, localOnly: false, requirements: [] }]),
+    );
+    assert.equal(withDigits.requestedCount, 15);
+  });
+
+  test('always checks the trade and place, then own-words requirements', () => {
+    const spec = { ...parseBusinessBrief('clothing brands in usa'), requirements: ['Sells online'] };
+    assert.deepEqual(judgeChecks(spec), [
+      'Is a clothing brand, or the same kind of business under another name',
+      'Is based in usa',
+      'Sells online',
+    ]);
+  });
+});
+
+describe('pipeline: count and to-review businesses', () => {
+  const page = (id: string, phone: string, address: string): AreaPlace => ({
+    id, name: `Shop ${id}`, categories: ['bakery'], address, city: '', postcode: '', country: 'GB',
+    phones: [phone], websites: [], emails: [], source: 'overture',
+    facebookPages: [{ key: `facebook:user:${id}`, url: `https://www.facebook.com/${id}`, username: id }],
+  });
+  const deps = (ai?: AiCall) => ({
+    areaSource: {
+      load: async () => ({
+        places: [page('sure', '0161 555 0111', '1 Road, Manchester, M1 1AA'), page('unsure', '0161 555 0112', '')],
+        areaName: 'Manchester, GB', country: 'GB', fromCache: false,
+      }),
+    },
+    tavilySearch: async () => [],
+    ai,
+  });
+
+  test('"find 1 ..." returns one business even when the box says 25', async () => {
+    const result = await runBusinessSearch({ query: 'find 1 bakery in Manchester, UK', limit: 25, includeMapOnly: false }, deps());
+    assert.equal(result.leads.length, 1);
+  });
+
+  test('the AI settles only the businesses the rules marked for review', async () => {
+    const ai = stub((stage, prompt) =>
+      stage === 'business_brief'
+        ? { trade: 'bakery', synonyms: [], place: 'Manchester, UK', quantity: 0, localOnly: false, requirements: [] }
+        : { results: [...prompt.matchAll(/id: (\S+)/g)].map((m) => ({ id: m[1], verdict: 'match', reason: 'Bakery in Manchester' })) },
+    );
+    const result = await runBusinessSearch({ query: 'bakeries in Manchester, UK', limit: 5 }, deps(ai));
+    assert.deepEqual(ai.calls, ['business_brief', 'business_judge']);
+    assert.equal(result.stats.ai.judged, 1, 'only the one without an address');
+    assert.equal(result.leads.every((lead) => lead.reviewStatus === 'UNREVIEWED'), true);
   });
 });

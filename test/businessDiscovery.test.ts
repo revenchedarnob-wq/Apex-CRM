@@ -434,3 +434,20 @@ describe('a whole country as the place', () => {
     assert.match(messages[0], /not a whole country/);
   });
 });
+
+describe('reading the brief without AI', () => {
+  test('reads "find 10" as the count, not as part of the trade', () => {
+    const spec = parseBusinessBrief('find 10 clothing brand in usa');
+    assert.equal(spec.requestedCount, 10);
+    assert.deepEqual(spec.categoryTerms, ['clothing', 'brand']);
+    assert.equal(parseBusinessBrief('25 plumbers in Leeds').requestedCount, 25);
+    assert.equal(parseBusinessBrief('bakeries in Leeds with 10k followers').requestedCount, undefined);
+    assert.equal(parseBusinessBrief('bakeries with 500 followers').requestedCount, undefined);
+  });
+
+  test('AI synonyms widen the category match', () => {
+    const spec = { ...parseBusinessBrief('clothing brands in usa'), synonyms: ['fashion label'] };
+    const q = qualifyBusiness({ name: 'Acme', category: 'Fashion label', address: '1 Main St, Austin, TX 78701', websites: ['https://acme.com'] }, spec);
+    assert.equal(q.checks.category, 'pass');
+  });
+});

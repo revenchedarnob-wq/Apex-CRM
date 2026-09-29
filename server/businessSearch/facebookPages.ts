@@ -163,15 +163,57 @@ async function readJsonArray(response: Response): Promise<any[]> {
  * longer than its one-minute sync window it answers 202 with a snapshot id; we then
  * poll progress and download the snapshot, up to `maxWaitMs`.
  */
+/** A snapshot still running at the deadline. Waiting on it again costs nothing; re-sending the URLs would pay twice. */
+export class SnapshotTimeoutError extends Error {
+  constructor(readonly snapshotId: string) {
+    super(`Bright Data snapshot ${snapshotId} was not ready in time`);
+    this.name = "SnapshotTimeoutError";
+  }
+}
+
 export async function scrapePagesBatch(
   urls: string[],
-  options: { token: string; fetchImpl?: FetchLike; signal?: AbortSignal; maxWaitMs?: number; pollMs?: number },
+  options: {
+    token: string;
+    fetchImpl?: FetchLike;
+    signal?: AbortSignal;
+    maxWaitMs?: number;
+    pollMs?: number;
+    /** Keep waiting on a snapshot that timed out instead of starting (and paying for) a new one. */
+    resumeSnapshotId?: string;
+    onQueued?: () => void;
+  },
 ): Promise<any[]> {
   const fetchImpl = options.fetchImpl || (fetch as FetchLike);
   const headers = {
     Authorization: `Bearer ${options.token}`,
     "Content-Type": "application/json",
   };
+  const snapshotId = options.resumeSnapshotId || (await triggerPagesScrape(urls, options, headers, fetchImpl));
+  if (Array.isArray(snapshotId)) return snapshotId;
+  const deadline = Date.now() + (options.maxWaitMs ?? 180_000);
+  const pollMs = options.pollMs ?? 10_000;
+  while (Date.now() < deadline) {
+    await sleep(pollMs, options.signal);
+    const progress = await fetchImpl(`${API_BASE}/progress/${snapshotId}`, { headers, signal: options.signal });
+    const state = (await progress.json().catch(() => ({}))) as { status?: string };
+    if (state.status === "failed") throw new Error(`Bright Data snapshot ${snapshotId} failed`);
+    if (state.status === "ready") {
+      const download = await fetchImpl(`${API_BASE}/snapshot/${snapshotId}?format=json`, { headers, signal: options.signal });
+      if (!download.ok) throw new Error(`Bright Data snapshot download failed with HTTP ${download.status}`);
+      return readJsonArray(download);
+    }
+  }
+  throw new SnapshotTimeoutError(snapshotId);
+}
+
+/** Starts a scrape. Returns the records when Bright Data answers at once, else the snapshot id. */
+async function triggerPagesScrape(
+  urls: string[],
+  options: { signal?: AbortSignal; onQueued?: () => void },
+  headers: Record<string, string>,
+  fetchImpl: FetchLike,
+): Promise<any[] | string> {
   const response = await fetchImpl(
     `${API_BASE}/scrape?dataset_id=${FACEBOOK_PAGES_DATASET_ID}&format=json&include_errors=true&notify=false`,
     {
@@ -192,20 +234,8 @@ export async function scrapePagesBatch(
   if (!snapshotId || !/^[A-Za-z0-9_-]{4,100}$/.test(snapshotId)) {
     throw new Error("Bright Data returned 202 without a usable snapshot id");
   }
-  const deadline = Date.now() + (options.maxWaitMs ?? 180_000);
-  const pollMs = options.pollMs ?? 10_000;
-  while (Date.now() < deadline) {
-    await sleep(pollMs, options.signal);
-    const progress = await fetchImpl(`${API_BASE}/progress/${snapshotId}`, { headers, signal: options.signal });
-    const state = (await progress.json().catch(() => ({}))) as { status?: string };
-    if (state.status === "failed") throw new Error(`Bright Data snapshot ${snapshotId} failed`);
-    if (state.status === "ready") {
-      const download = await fetchImpl(`${API_BASE}/snapshot/${snapshotId}?format=json`, { headers, signal: options.signal });
-      if (!download.ok) throw new Error(`Bright Data snapshot download failed with HTTP ${download.status}`);
-      return readJsonArray(download);
-    }
-  }
-  throw new Error(`Bright Data snapshot ${snapshotId} was not ready in time`);
+  options.onQueued?.();
+  return snapshotId;
 }
 
 export type PageCache = {
@@ -250,12 +280,21 @@ export async function readFacebookPages(
     const batch = toFetch.slice(i, i + PAGES_BATCH_SIZE);
     let records: any[] | null = null;
     let lastError = "";
+    let resumeSnapshotId: string | undefined;
     for (let attempt = 0; attempt < 2 && records === null; attempt++) {
       try {
-        records = await scrapePagesBatch(batch.map((page) => page.url), options);
+        records = await scrapePagesBatch(batch.map((page) => page.url), {
+          ...options,
+          resumeSnapshotId,
+          onQueued: () =>
+            options.onProgress?.(`Bright Data queued ${batch.length} Pages; waiting for them (usually 1 to 5 minutes).`),
+        });
       } catch (error) {
         if ((error as Error)?.name === "AbortError") throw error;
         lastError = (error as Error)?.message || String(error);
+        // A slow snapshot is still running: wait on it again rather than paying for a new one.
+        resumeSnapshotId = error instanceof SnapshotTimeoutError ? error.snapshotId : undefined;
+        if (resumeSnapshotId) options.onProgress?.("Bright Data is still reading the Pages; waiting a little longer.");
       }
     }
     if (records === null) {

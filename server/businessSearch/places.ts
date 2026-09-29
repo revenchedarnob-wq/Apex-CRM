@@ -92,10 +92,21 @@ export function tradePhrases(spec: BusinessSearchSpec): string[] {
   return Array.from(new Set([phrase, ...synonyms]));
 }
 
+/**
+ * Trade phrases plus the AI's synonyms, for matching a business's category. Kept apart
+ * from tradePhrases(), which also builds the map query and its cache key and so must not
+ * change from one run to the next.
+ */
+export function matchPhrases(spec: BusinessSearchSpec): string[] {
+  const phrases = tradePhrases(spec);
+  if (!phrases.length) return phrases;
+  return Array.from(new Set([...phrases, ...(spec.synonyms || []).map((item) => item.trim()).filter(Boolean)]));
+}
+
 /** True when a place's categories or name contain every word of any trade phrase. */
 export function placeMatchesTrade(place: Pick<AreaPlace, "name" | "categories">, spec: BusinessSearchSpec): boolean {
   const available = new Set(normalizeWords([...place.categories, place.name].join(" ")));
-  return tradePhrases(spec).some((phrase) => normalizeWords(phrase).every((word) => available.has(word)));
+  return matchPhrases(spec).some((phrase) => normalizeWords(phrase).every((word) => available.has(word)));
 }
 
 const COUNTRY_ALIASES: Record<string, string> = {

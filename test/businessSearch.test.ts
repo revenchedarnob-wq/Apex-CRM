@@ -141,6 +141,30 @@ describe('Bright Data Page records', () => {
     assert.ok(calls.some((url) => url.includes('/snapshot/s_abc123')));
   });
 
+  test('waits again on a slow snapshot instead of paying for a new one', async () => {
+    let triggers = 0;
+    let started = 0;
+    const out = await readFacebookPages([{ key: 'facebook:user:sweetcrumbsmcr', url: 'https://www.facebook.com/sweetcrumbsmcr' }], {
+      token: 't',
+      pollMs: 1,
+      maxWaitMs: 20,
+      fetchImpl: async (url) => {
+        if (url.includes('/scrape')) {
+          triggers++;
+          started = Date.now();
+          return json(202, { snapshot_id: 's_slow1' });
+        }
+        if (url.includes('/progress/')) {
+          // Ready only after the first 20 ms wait has run out.
+          return json(200, { status: Date.now() - started > 25 ? 'ready' : 'running' });
+        }
+        return json(200, [bakeryRecord]);
+      },
+    });
+    assert.equal(triggers, 1);
+    assert.equal(out.fetched, 1);
+  });
+
   test('uses the cache and marks failed batches', async () => {
     const cached = mapPageRecord(bakeryRecord)!;
     let fetches = 0;

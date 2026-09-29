@@ -32,6 +32,11 @@ export function buildDiscoveryQueries(spec: BusinessSearchSpec, maxQueries = 8):
     `site:facebook.com ${category}${inPlace}`,
     `site:facebook.com "${category}"${quotedPlace}`,
     `${category}${inPlace} facebook page`,
+    // Other names for the trade, from the AI, find Pages that describe themselves differently.
+    ...(spec.synonyms || [])
+      .filter((synonym) => synonym.toLowerCase() !== category.toLowerCase())
+      .slice(0, 2)
+      .map((synonym) => `site:facebook.com ${synonym}${inPlace}`),
     `site:facebook.com ${category}${inPlace} contact`,
     `site:facebook.com ${category}${inPlace} "local business"`,
     `site:facebook.com ${category}${inPlace} phone email`,

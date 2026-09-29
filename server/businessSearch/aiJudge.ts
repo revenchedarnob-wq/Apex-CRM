@@ -23,19 +23,25 @@ const ABOUT_CHARS = 600;
 
 const BRIEF_SYSTEM = `You turn a request for business leads into search settings.
 Return:
-- trade: the kind of business as a short singular noun phrase ("bakery", "hair salon", "plumber"). Never include adjectives about quality, size, price or ownership.
-- place: the town, city or area with its country if given ("Manchester, UK"), exactly as written in the request, or "" if none.
-- requirements: every other condition in the request, each as a short plain sentence ("Makes wedding cakes", "Looks high-end", "Has no online ordering"). Leave out the trade, the place, follower counts, and "independent", "local", "small" or "family-run". Use [] if there are none.
-Never invent requirements the request does not state.`;
+- trade: the kind of business as a short singular noun phrase ("bakery", "hair salon", "clothing brand"). Never include adjectives about quality, size, price or ownership.
+- synonyms: up to 4 other names people and Facebook use for that trade ("cake shop", "patisserie" for bakery; "apparel brand", "fashion brand" for clothing brand). [] if none.
+- place: the town, city, region or country exactly as written in the request ("Manchester, UK", "usa"), or "" if none.
+- quantity: how many businesses the request asks for ("find 10 ..." is 10), or 0 if it does not say.
+- localOnly: true only if the request asks for independent, local, small or family-run businesses.
+- requirements: every other condition in the request, each as a short plain sentence ("Makes wedding cakes", "Looks high-end", "Has no online ordering"). Leave out the trade, the place, the quantity, follower counts, and independent, local, small or family-run. [] if none.
+Never invent anything the request does not state.`;
 
 const BRIEF_SCHEMA = {
   type: "object",
   properties: {
     trade: { type: "string" },
+    synonyms: { type: "array", items: { type: "string" } },
     place: { type: "string" },
+    quantity: { type: "integer" },
+    localOnly: { type: "boolean" },
     requirements: { type: "array", items: { type: "string" } },
   },
-  required: ["trade", "place", "requirements"],
+  required: ["trade", "synonyms", "place", "quantity", "localOnly", "requirements"],
 };
 
 const JUDGE_SYSTEM = `You check businesses against a client's requirements for sales leads.
@@ -82,31 +88,67 @@ export async function readBriefWithAi(
   ai: AiCall,
   signal?: AbortSignal,
 ): Promise<BusinessSearchSpec> {
-  const answer = await ai<{ trade?: unknown; place?: unknown; requirements?: unknown }>(
+  const answer = await ai<Record<string, unknown>>(
     `Request: ${rules.brief}`,
     BRIEF_SCHEMA,
     BRIEF_SYSTEM,
-    { maxTokens: 400, stage: "business_brief", signal },
+    { maxTokens: 500, stage: "business_brief", signal },
   );
   const briefWords = new Set(words(rules.brief).map(singularize));
+  const strings = (value: unknown, max: number, maxLength: number) =>
+    Array.isArray(value)
+      ? value
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 1)
+          .map((item) => item.trim().slice(0, maxLength))
+          .slice(0, max)
+      : [];
+
   const trade = typeof answer?.trade === "string" ? answer.trade.trim() : "";
   const tradeTerms = words(trade).map(singularize);
   // A trade the brief never mentions is a guess; keep the rules result.
   const tradeInBrief = tradeTerms.length > 0 && tradeTerms.some((word) => briefWords.has(word));
+  const categoryTerms = tradeInBrief ? Array.from(new Set(tradeTerms)) : rules.categoryTerms;
+
   const place = typeof answer?.place === "string" ? answer.place.trim() : "";
-  const placeInBrief = place && words(place.split(",")[0]).every((word) => briefWords.has(singularize(word)));
-  const requirements = Array.isArray(answer?.requirements)
-    ? answer.requirements
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 1)
-        .map((item) => item.trim().slice(0, 200))
-        .slice(0, 8)
-    : [];
+  const placeWords = words(place.split(",")[0] || "");
+  const placeInBrief = placeWords.length > 0 && placeWords.every((word) => briefWords.has(singularize(word)));
+
+  const placeText = new Set(words(placeInBrief ? place : rules.place));
+  const synonyms = strings(answer?.synonyms, 4, 40).filter(
+    (synonym) => !words(synonym).some((word) => placeText.has(word)) && words(synonym).join(" ") !== categoryTerms.join(" "),
+  );
+
+  // The count must be a number the brief actually contains.
+  const quantity = Number(answer?.quantity);
+  const aiCount =
+    Number.isInteger(quantity) && quantity >= 1 && quantity <= 100 && new RegExp(`\\b${quantity}\\b`).test(rules.brief)
+      ? quantity
+      : undefined;
+  const requestedCount = rules.requestedCount ?? aiCount;
+
   return {
     ...rules,
-    categoryTerms: tradeInBrief ? Array.from(new Set(tradeTerms)) : rules.categoryTerms,
+    categoryTerms,
     place: placeInBrief ? place : rules.place,
-    requirements,
+    synonyms,
+    requirements: strings(answer?.requirements, 8, 200),
+    localOnly: Boolean(rules.localOnly || answer?.localOnly === true),
+    ...(requestedCount ? { requestedCount } : {}),
   };
+}
+
+/**
+ * What the AI checks for a business. The trade and the place are always included, so
+ * the AI can settle businesses the rules marked for review; the brief's own-words
+ * requirements follow.
+ */
+export function judgeChecks(spec: BusinessSearchSpec): string[] {
+  const trade = spec.categoryTerms.join(" ");
+  return [
+    trade && `Is a ${trade}, or the same kind of business under another name`,
+    spec.place && `Is based in ${spec.place}`,
+    ...(spec.requirements || []),
+  ].filter((item): item is string => Boolean(item));
 }
 
 /** The facts the AI judges from. Only what the Page or map listing says. */
@@ -128,7 +170,7 @@ function describeBusiness(id: string, business: BusinessDetails, onFacebook: boo
 }
 
 /**
- * Judges businesses against the brief's requirements, 10 per AI call. Returns a verdict
+ * Judges businesses against judgeChecks(), 10 per AI call. Returns a verdict
  * per id; ids missing from the answer, or from a batch whose call failed, are left out
  * so the rules result stands for them.
  */
@@ -139,7 +181,7 @@ export async function judgeBusinesses(
   options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {},
 ): Promise<Map<string, AiVerdict>> {
   const verdicts = new Map<string, AiVerdict>();
-  const requirements = spec.requirements || [];
+  const requirements = judgeChecks(spec);
   if (requirements.length === 0 || items.length === 0) return verdicts;
   for (let start = 0; start < items.length; start += BATCH_SIZE) {
     if (options.signal?.aborted) break;

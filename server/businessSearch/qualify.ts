@@ -1,6 +1,6 @@
 import type { BusinessDetails } from "../../src/types.js";
 import { singularize, type BusinessSearchSpec } from "./brief.js";
-import { addressCountry, splitPlaceAndCountry, tradePhrases } from "./places.js";
+import { addressCountry, matchPhrases, splitPlaceAndCountry } from "./places.js";
 
 export type CheckResult = "pass" | "fail" | "unsure";
 
@@ -45,7 +45,7 @@ export function qualifyBusiness(business: BusinessDetails, spec: BusinessSearchS
 
   let category: CheckResult;
   // Any common name for the trade counts: a "Cake Shop" Page matches a search for bakeries.
-  const phrases = tradePhrases(spec);
+  const phrases = matchPhrases(spec);
   const matchesTrade = (text: string) =>
     phrases.length === 0 ? containsAllTerms(text, spec.categoryTerms) : phrases.some((phrase) => containsAllTerms(text, [phrase]));
   if (matchesTrade(categoryText)) {
