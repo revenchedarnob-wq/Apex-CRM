@@ -363,7 +363,7 @@ export function verifyEvidencePassage(
   if (evidenceText.includes(citedQuote)) {
     // Check preceding tokens within the same clause/sentence for negators or past-role markers
     const matchIdx = evidenceText.indexOf(citedQuote);
-    const clauseBefore = evidenceText.slice(0, matchIdx).split(/[.;!?\n|—–]+/).pop() || '';
+    const clauseBefore = evidenceText.slice(0, matchIdx).split(/[.;!?\n|\u2014\u2013]+/).pop() || '';
     const precedingTokens = normalizePassage(clauseBefore).split(' ').filter(Boolean).slice(-4);
     if (hasStrayNegator(precedingTokens)) {
       return { valid: false, similarity: 0.49 };
@@ -371,7 +371,7 @@ export function verifyEvidencePassage(
     return { valid: true, similarity: 1.0 };
   }
 
-  const rawClauses = evidenceText.split(/[.;!?\n|—–]+/);
+  const rawClauses = evidenceText.split(/[.;!?\n|\u2014\u2013]+/);
   const rawEvidenceTokens: string[] = [];
   const evidenceTokens: string[] = [];
   const tokenClauseIdx: number[] = [];
