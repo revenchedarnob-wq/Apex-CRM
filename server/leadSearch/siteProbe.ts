@@ -666,7 +666,7 @@ export async function probeCompanySites(
           'company location team size services about us',
           {
             signal: options.abortSignal,
-            timeoutMs: 8000,
+            timeout: 8,
           },
         );
         if (Array.isArray(altExtracted)) {
